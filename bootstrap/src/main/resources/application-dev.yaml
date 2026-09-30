@@ -1,0 +1,13 @@
+spring:
+  docker:
+    compose:
+      enabled: true
+      file: compose.yml
+      lifecycle-management: start-only
+      profiles:
+        active: []                 # add "full" to also start Valkey, Kafka and Keycloak
+
+management:
+  endpoint:
+    health:
+      show-details: always         # dev only: never widen this on the default profile

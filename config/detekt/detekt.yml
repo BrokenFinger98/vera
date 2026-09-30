@@ -1,0 +1,133 @@
+# Vera detekt configuration — the five core principles as rules.
+# 1 one method = one job (≤10 lines)   2 no else / early return   3 wrap primitives
+# 4 behaviour over getters             5 composition over inheritance
+# Rules that cannot be expressed here are covered by ArchUnit (archTest) or review.
+build:
+  maxIssues: 0
+  weights:
+    complexity: 2
+    style: 1
+
+config:
+  validation: true
+  warningsAsErrors: true
+
+complexity:
+  active: true
+  LongMethod:
+    active: true
+    # principle 1: a function declaration longer than 10 lines (signature to closing brace) is a smell
+    threshold: 11
+    ignoreAnnotated:
+      - 'Test'
+      - 'ParameterizedTest'
+      - 'RepeatedTest'
+      - 'TestFactory'
+      - 'BeforeEach'
+      - 'AfterEach'
+      - 'BeforeAll'
+      - 'AfterAll'
+      - 'Bean'
+  LongParameterList:
+    active: true
+    functionThreshold: 5
+    constructorThreshold: 6
+    ignoreDefaultParameters: true
+  NestedBlockDepth:
+    active: true
+    threshold: 3             # principle 2: early return instead of nesting
+  TooManyFunctions:
+    active: true
+    # detekt's inherited test excludes only know src/test; the custom suites need naming too.
+    excludes: &testSuites ['**/test/**', '**/itest/**', '**/archTest/**', '**/*.kts']
+    thresholdInClasses: 12
+    thresholdInInterfaces: 12
+    thresholdInObjects: 12
+    thresholdInFiles: 20
+    ignoreDeprecated: true
+    ignorePrivate: true
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 8
+  LargeClass:
+    active: true
+    threshold: 300
+
+style:
+  active: true
+  ReturnCount:
+    active: false            # early returns are the rule, not the exception
+  MaxLineLength:
+    active: true
+    maxLineLength: 120
+  ForbiddenComment:
+    active: true
+    comments:
+      - reason: 'Track work in GitHub issues, not in code comments.'
+        value: 'TODO'
+      - reason: 'Track work in GitHub issues, not in code comments.'
+        value: 'FIXME'
+  MagicNumber:
+    active: true
+    excludes: *testSuites
+    ignoreNumbers: ['-1', '0', '1', '2']
+    ignoreAnnotation: true
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+  UnusedPrivateMember:
+    active: true
+  UseDataClass:
+    active: true
+  WildcardImport:
+    active: true
+    excludeImports: []
+  ThrowsCount:
+    active: true
+    max: 3
+    excludeGuardClauses: true   # principle 2: leading `if (...) throw` guards are the house style
+  UnnecessaryAbstractClass:
+    active: true             # principle 5: composition over inheritance
+  UnnecessaryInheritance:
+    active: true
+
+exceptions:
+  active: true
+  TooGenericExceptionCaught:
+    active: true
+    excludes: *testSuites
+  SwallowedException:
+    active: true             # GitClear 2026: error-masking +47% in AI code — never swallow
+  PrintStackTrace:
+    active: true
+  InstanceOfCheckForException:
+    active: true
+    excludes: *testSuites
+
+potential-bugs:
+  active: true
+  # type resolution via detektMain — declared nullability only; inferred nulls are not caught until detekt 2.x
+  UnsafeCallOnNullableType:
+    active: true
+  # type resolution via detektMain — declared nullability only; inferred nulls are not caught until detekt 2.x
+  ImplicitDefaultLocale:
+    active: true
+
+naming:
+  active: true
+  FunctionNaming:
+    active: true
+    ignoreAnnotated: ['Test', 'ParameterizedTest']
+  ClassNaming:
+    active: true
+
+performance:
+  active: true
+  SpreadOperator:
+    active: false            # forwarding vararg needs *; one startup copy is not a cost (same shape as ReturnCount)
+
+# No `formatting:` section here on purpose. ktfmt via Spotless owns formatting, so the
+# detekt-formatting ruleset is not on the detekt classpath, and its config keys would then fail
+# `config.validation` as unknown properties.
+
+coroutines:
+  active: true

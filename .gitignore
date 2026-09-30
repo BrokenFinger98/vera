@@ -1,0 +1,32 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Local env and secrets
+.env
+.env.local
+*.local.yaml
+
+# Personal harness state (committed twin: goal.md.example)
+.harness/state/goal.md
+
+# LLM wiki raw transcripts (copies of ~/.claude/projects; never commit)
+docs/llm-wiki/raw/inbox/
+
+# Claude Code personal files
+.claude/settings.local.json
+CLAUDE.local.md
+.claude/worktrees/
+
+# Korean-only research notes live in the owner's central wiki, not here
+docs/research/

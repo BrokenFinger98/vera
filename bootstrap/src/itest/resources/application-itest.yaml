@@ -1,0 +1,9 @@
+spring:
+  docker:
+    compose:
+      enabled: false
+
+management:
+  endpoint:
+    health:
+      show-details: always

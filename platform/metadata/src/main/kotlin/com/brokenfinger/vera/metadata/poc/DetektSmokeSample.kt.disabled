@@ -1,0 +1,27 @@
+package com.brokenfinger.vera.metadata.poc
+
+// Deliberately violates LongMethod, NestedBlockDepth, MagicNumber and ForbiddenComment.
+// Kept with a .disabled suffix so it never compiles; rename to .kt only for the smoke check.
+class DetektSmokeSample {
+    fun tooLongAndTooNested(input: Int): Int {
+        var total = 0
+        if (input > 0) {
+            if (input > 10) {
+                if (input > 100) {
+                    total += 3 // TODO remove
+                } else {
+                    total += 2
+                }
+            } else {
+                total += 1
+            }
+        }
+        total += 7
+        total += 8
+        total += 9
+        total += 10
+        total += 11
+        total += 12
+        return total
+    }
+}
