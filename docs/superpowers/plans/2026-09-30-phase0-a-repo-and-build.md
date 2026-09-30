@@ -2288,7 +2288,9 @@ import org.junit.jupiter.params.provider.CsvSource
 
 class ScriptSandboxTest {
 
-    private val sandbox = ScriptSandbox(statementLimit = 200_000)
+    // A generous wall clock: interpreter-only GraalJS on a slow CI runner must not turn a size or
+    // contract check into a timeout. Timing tests build their own sandbox with a short timeout.
+    private val sandbox = ScriptSandbox(statementLimit = 200_000, timeout = SIZE_BUDGET)
 
     @Test
     fun `returns a JSON string produced by the script`() {
@@ -2380,9 +2382,11 @@ class ScriptSandboxTest {
 
     @Test
     fun `results over 1 MiB are rejected`() {
-        assertThatThrownBy { sandbox.run("'x'.repeat(1024 * 1024 + 1)") }
-            .isInstanceOf(ScriptLimitException::class.java)
-            .hasMessageContaining("Script result is 1048577 characters; the limit is 1048576")
+        assertTimeoutPreemptively(SIZE_GUARD) {
+            assertThatThrownBy { sandbox.run("'x'.repeat(1024 * 1024 + 1)") }
+                .isInstanceOf(ScriptLimitException::class.java)
+                .hasMessageContaining("Script result is 1048577 characters; the limit is 1048576")
+        }
     }
 
     @ParameterizedTest
@@ -2405,10 +2409,10 @@ class ScriptSandboxTest {
 
     @Test
     fun `error messages are cut to 4 KiB and drop the oversized cause`() {
-        assertTimeoutPreemptively(Duration.ofSeconds(5)) {
-            assertThatThrownBy { sandbox.run("throw new Error('x'.repeat(5e7))") }
+        assertTimeoutPreemptively(SIZE_GUARD) {
+            assertThatThrownBy { sandbox.run("throw new Error('x'.repeat(100000))") }
                 .isInstanceOf(ScriptFailedException::class.java)
-                .hasMessageEndingWith("… [truncated 49995911 chars]")
+                .hasMessageEndingWith("… [truncated 95911 chars]")
                 .hasNoCause()
                 .satisfies({ assertThat(it.message).hasSizeLessThan(4200) })
         }
@@ -2416,7 +2420,7 @@ class ScriptSandboxTest {
 
     @Test
     fun `host heap exhaustion is not reported as a script limit`() {
-        assertTimeoutPreemptively(Duration.ofSeconds(5)) {
+        assertTimeoutPreemptively(SIZE_GUARD) {
             assertThatThrownBy { sandbox.run("'x'.repeat(2 ** 29)") }
                 .isInstanceOf(ScriptHostExhaustedException::class.java)
                 .hasMessage("Java heap space")
@@ -2428,6 +2432,11 @@ class ScriptSandboxTest {
     fun `engine-specific globals are removed`() {
         val types = sandbox.run("[typeof Graal, typeof load, typeof loadWithNewGlobal].join()")
         assertThat(types).isEqualTo("undefined,undefined,undefined")
+    }
+
+    private companion object {
+        val SIZE_BUDGET: Duration = Duration.ofSeconds(20)
+        val SIZE_GUARD: Duration = Duration.ofSeconds(30)
     }
 }
 ```
@@ -2645,7 +2654,7 @@ Observed failure messages (2026-09-30, Temurin 25, polyglot/js-community 25.4.4.
 - Wall clock: `Script exceeded the wall-clock timeout of PT0.5S`; the test took 0.506 s (limit `Long.MAX_VALUE`, timeout 500 ms), so the cancel is prompt.
 - Interrupt: `Script caller was interrupted; the script was cancelled`; the test took 0.216 s (interrupt at 200 ms).
 - Script error: `Error: boom`. Contract: `Script must return a string but returned number` / `undefined` / `Object` / `String` (wrapper).
-- Oversized error: `throw new Error('x'.repeat(5e7))` → a 4096-char message ending `… [truncated 49995911 chars]`, no cause.
+- Oversized error: `throw new Error('x'.repeat(5e7))` → a 4096-char message ending `… [truncated 49995911 chars]`, no cause. The committed test uses `'x'.repeat(100000)` (`… [truncated 95911 chars]`): the smallest payload that still proves the cut.
 - Host heap: `'x'.repeat(2 ** 29)` → `ScriptHostExhaustedException: Java heap space` (`isResourceExhausted=true`, `isCancelled=false`; the statement limit is `true`/`true`).
 
 Timings (2026-09-30, three runs of a temporary probe test against the first version of the sandbox, since removed; each `run` builds a fresh context and executor): first `run` in a fresh JVM 748–766 ms (engine warm-up), then 2.0–3.2 ms per `run` of `JSON.stringify({ ok: true, n: 1 + 1 })`. For comparison the wiki measured ~1.7 s for the first GraalPy context.
@@ -2664,6 +2673,8 @@ Adversarial review, round 2 (2026-09-30), on `4303aab`:
 - Fixed — host OOM was reported as `ScriptLimitException`, indistinguishable from a statement-limit cut: now `ScriptHostExhaustedException`.
 - Fixed — `new String('x')` passed the contract; `load`, `loadWithNewGlobal` and `Graal` removed; the result length is checked in the guest before the host copy.
 - Skipped — `SharedArrayBuffer`/`Atomics`: their options are experimental and CONSTRAINED rejects them.
+
+CI time budget (2026-09-30): on `ubuntu-latest` (interpreter-only GraalJS, slower runner) `results over 1 MiB are rejected` and the 5e7-char error test hit the then-default 2 s wall clock (`ScriptTimeoutException ... PT2S`) instead of their size exceptions. The tests, not the sandbox, were fixed: the shared test sandbox gets a 20 s wall clock and size-handling tests (result cap, message cut, host heap) a 30 s `assertTimeoutPreemptively` guard; the truncation payload shrank from 5e7 to 100 000 chars. Timing tests (wall clock, interrupt) keep their own short-timeout sandbox and the 5 s guard; the statement-limit test keeps the 5 s guard (the limit cuts it in ~50 ms, so the sandbox's wall clock is irrelevant there).
 
 - [ ] **Step 4: Check whether the isolate artifact exists (spec §11 PoC 2, second half)**
 

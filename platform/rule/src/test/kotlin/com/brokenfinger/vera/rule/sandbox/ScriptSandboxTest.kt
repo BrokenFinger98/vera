@@ -12,7 +12,9 @@ import org.junit.jupiter.params.provider.CsvSource
 
 class ScriptSandboxTest {
 
-    private val sandbox = ScriptSandbox(statementLimit = 200_000)
+    // A generous wall clock: interpreter-only GraalJS on a slow CI runner must not turn a size or
+    // contract check into a timeout. Timing tests build their own sandbox with a short timeout.
+    private val sandbox = ScriptSandbox(statementLimit = 200_000, timeout = SIZE_BUDGET)
 
     @Test
     fun `returns a JSON string produced by the script`() {
@@ -104,9 +106,11 @@ class ScriptSandboxTest {
 
     @Test
     fun `results over 1 MiB are rejected`() {
-        assertThatThrownBy { sandbox.run("'x'.repeat(1024 * 1024 + 1)") }
-            .isInstanceOf(ScriptLimitException::class.java)
-            .hasMessageContaining("Script result is 1048577 characters; the limit is 1048576")
+        assertTimeoutPreemptively(SIZE_GUARD) {
+            assertThatThrownBy { sandbox.run("'x'.repeat(1024 * 1024 + 1)") }
+                .isInstanceOf(ScriptLimitException::class.java)
+                .hasMessageContaining("Script result is 1048577 characters; the limit is 1048576")
+        }
     }
 
     @ParameterizedTest
@@ -129,10 +133,10 @@ class ScriptSandboxTest {
 
     @Test
     fun `error messages are cut to 4 KiB and drop the oversized cause`() {
-        assertTimeoutPreemptively(Duration.ofSeconds(5)) {
-            assertThatThrownBy { sandbox.run("throw new Error('x'.repeat(5e7))") }
+        assertTimeoutPreemptively(SIZE_GUARD) {
+            assertThatThrownBy { sandbox.run("throw new Error('x'.repeat(100000))") }
                 .isInstanceOf(ScriptFailedException::class.java)
-                .hasMessageEndingWith("… [truncated 49995911 chars]")
+                .hasMessageEndingWith("… [truncated 95911 chars]")
                 .hasNoCause()
                 .satisfies({ assertThat(it.message).hasSizeLessThan(4200) })
         }
@@ -140,7 +144,7 @@ class ScriptSandboxTest {
 
     @Test
     fun `host heap exhaustion is not reported as a script limit`() {
-        assertTimeoutPreemptively(Duration.ofSeconds(5)) {
+        assertTimeoutPreemptively(SIZE_GUARD) {
             assertThatThrownBy { sandbox.run("'x'.repeat(2 ** 29)") }
                 .isInstanceOf(ScriptHostExhaustedException::class.java)
                 .hasMessage("Java heap space")
@@ -152,5 +156,10 @@ class ScriptSandboxTest {
     fun `engine-specific globals are removed`() {
         val types = sandbox.run("[typeof Graal, typeof load, typeof loadWithNewGlobal].join()")
         assertThat(types).isEqualTo("undefined,undefined,undefined")
+    }
+
+    private companion object {
+        val SIZE_BUDGET: Duration = Duration.ofSeconds(20)
+        val SIZE_GUARD: Duration = Duration.ofSeconds(30)
     }
 }
