@@ -87,7 +87,7 @@ you prove completion with evidence (command output, `git diff --stat`), never wi
 
 - Editing a merged Flyway migration (`V*.sql`). Add a new timestamped one.
 - Weakening or deleting a test, or adding `@Suppress`, to get green. Fix the code.
-- detekt baseline files, `maxIssues` > 0, lowering Kover `minBound`.
+- detekt baseline files, weakening detekt's `failOnSeverity = Info`, lowering Kover `minBound`.
 - `cd` inside a Bash command (deny rules on `.env*` make it prompt; use absolute paths, `git -C`).
 - Direct commits or pushes to `main`; work without an issue; PR > 400 changed lines without a split rationale.
 - Employer code, designs, customer data or names. Public sources only.
@@ -202,11 +202,11 @@ where possible: detekt (`config/detekt/detekt.yml`), Konsist (`bootstrap/src/arc
 
 ## Core principles (team standard, encoded in detekt)
 
-1. One method = one job, ≤10 lines (`LongMethod threshold 11`).
-2. No `else`; early return (`NestedBlockDepth 3`, `ReturnCount` disabled on purpose).
+1. One method = one job, ≤10 lines (`LongMethod allowedLines 10`).
+2. No `else`; early return (`NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
 3. Wrap primitives and collections in domain objects (`value class` with one property — Konsist).
 4. Behaviour methods over getters (a domain object does things; it does not expose fields for others to decide).
-5. Composition over inheritance (`UnnecessaryAbstractClass`, `UnnecessaryInheritance`).
+5. Composition over inheritance (`AbstractClassCanBeConcreteClass`, `AbstractClassCanBeInterface`, `UnnecessaryInheritance`).
 
 Effective Kotlin defaults: `val` over `var`, no `!!` in production code, `data class` for values,
 `sealed interface` for closed hierarchies, scope functions only when they read better.
@@ -249,7 +249,7 @@ Dependency direction: `internal → application → domain`. Other modules see o
 
 Never swallow exceptions. Log at the boundary once, with structured key=value pairs, no PII, no secrets.
 
-## Kotlin constructs to avoid until tooling catches up (Konsist 0.17 / detekt 1.23 parse Kotlin 2.0 syntax)
+## Kotlin constructs to avoid until tooling catches up (Konsist 0.17 parses Kotlin 2.0 syntax; detekt 2.0 parses 2.4)
 
 Context parameters, guard conditions in `when`, non-local `break`/`continue`. Record any parser failure in an ADR.
 ```
@@ -456,7 +456,7 @@ if [ $code -eq 0 ]; then exit 0; fi
 {
   echo "🛑 stop-gate: ./scripts/check.sh failed (exit $code). Fix before stopping. Last 40 lines (Gradle boilerplate is ~12, so the failing test name survives):"
   printf '%s\n' "$out" | tail -40
-  echo "Order: spotlessApply → detekt.md → test-results XML → archTest rule name. Never weaken a test or rule to pass."
+  echo "Order: spotlessApply → build/reports/detekt/<source set>.md → test-results XML → archTest rule name. Never weaken a test or rule to pass."
 } >&2
 exit 2
 ```
@@ -980,7 +980,7 @@ Read this first. Every page is registered here; entries start with a date so mer
 ## Decisions
 - 2026-09-30 [[decisions/2026-09-30-public-english-repository]] — D1: public GitHub repo, English committed artifacts, README.ko.md only Korean twin
 - 2026-09-30 [[decisions/2026-09-30-stack-baseline-sept-2026]] — D2: Java 25, Boot 4.1, Modulith 2.1, PG 18, jOOQ 3.21, Valkey 9, Testcontainers 2
-- 2026-09-30 [[decisions/2026-09-30-kotlin-2-3-until-toolchain-catches-up]] — D3: Kotlin 2.3.21 (BOM) until detekt/ktfmt support 2.4
+- 2026-09-30 [[decisions/2026-09-30-kotlin-2-3-until-toolchain-catches-up]] — D3: Kotlin 2.3.21 (Boot 4.1 BOM) until Boot 4.2; detekt 2.0 alpha since 2026-10-01
 - 2026-09-30 [[decisions/2026-09-30-scenarios-and-gates-not-ritual-tdd]] — D4: EARS scenarios + gates + arch tests + scoped mutation instead of enforced TDD
 - 2026-09-30 [[decisions/2026-09-30-orca-worktrees-for-parallel-work]] — D5: Orca, 2–3 worktrees, one owned module per ticket
 - 2026-09-30 [[decisions/2026-09-30-graaljs-on-stock-jdk-first]] — D6: GraalJS js-community on stock JDK (interpreter), benchmark before GraalVM CE
@@ -1145,8 +1145,8 @@ if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/main/*' | grep -E '^\+.*@Suppr
   violation "new @Suppress( in production code" "Fix the reported issue instead of suppressing it. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
 fi
 
-# 4. detekt baseline files
-if echo "$changed" | grep -qE 'detekt-baseline\.xml$'; then
+# 4. detekt baseline files (detekt 2.x names them per source set, e.g. detekt-baseline-main.xml)
+if echo "$changed" | grep -qE 'detekt-baseline[^/]*\.xml$'; then
   violation "detekt baseline file added" "Delete it. Baselines hide debt from the gates (CLAUDE.md Forbidden)." detekt-baseline
 fi
 
@@ -1824,20 +1824,20 @@ Boot 4 starter modularisation fails silently when a starter is missing; Testcont
 `2026-09-30-kotlin-2-3-until-toolchain-catches-up.md`:
 
 ```markdown
-# D3 — Kotlin 2.3.21 until the lint toolchain supports 2.4
+# D3 — Kotlin 2.3.21 while the Spring Boot BOM manages it
 
 ## Context
-Kotlin 2.4.20 is current, but detekt's stable line (1.23.8) and ktlint's stable line embed a Kotlin 2.0 parser; only alphas support 2.4. Boot 4.1.1's BOM manages Kotlin 2.3.21.
+Kotlin 2.4.20 is current; Spring Boot 4.1.1's BOM manages Kotlin 2.3.21. On 2026-09-30 the linter was a second reason to stay: detekt's stable line (1.23.8, no release since 2025-02) embeds a Kotlin 2.0.21 compiler that cannot run on JDK 25 or read Kotlin 2.3 stdlib metadata. On 2026-10-01 detekt 2.0.0-alpha.x replaced it: built on Kotlin 2.4, tested against JDK 25, type resolution on every source set (Plan A, Task 3 decision).
 ## Options considered
-Kotlin 2.4.20 with alpha linters · Kotlin 2.3.21 with stable linters.
+Kotlin 2.4.20 over the BOM · Kotlin 2.3.21 as the BOM manages it.
 ## Decision
-Kotlin 2.3.21 (BOM-managed). Avoid constructs newer than the parsers know (`docs/development-rules.md`).
+Kotlin 2.3.21 (BOM-managed). The reason is the Boot BOM, no longer the linter: detekt 2.0.0-alpha.x, adopted on 2026-10-01 for JDK 25 support and full type resolution, parses Kotlin 2.4.
 ## Rationale
-Deterministic formatting and linting are gates; an alpha gate is a flaky gate.
+The BOM's Kotlin is the version Boot 4.1 is built and tested with; overriding it buys no feature the project needs yet.
 ## Accepted costs
-No Kotlin 2.4 features yet; detekt may warn on some 2.3 syntax (PoC 3 records any parse failure).
+No Kotlin 2.4 features yet. The linter is an alpha: pinned exactly, a development tool that never ships, reverted in one PR if it misbehaves.
 ## Outcome
-Revisit when detekt 2.0 or ktlint 2.0 reach GA with Kotlin 2.4 support.
+Revisit Kotlin 2.4 with Spring Boot 4.2 (GA 2026-11).
 ```
 
 `2026-09-30-scenarios-and-gates-not-ritual-tdd.md`:
