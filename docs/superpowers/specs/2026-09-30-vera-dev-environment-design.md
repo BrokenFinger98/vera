@@ -20,7 +20,7 @@ comes from the origin chat and is **not** redesigned here; it is restated only w
 | # | Decision | Consequence |
 |---|---|---|
 | D1 | Public GitHub repository, **English committed artifacts** (code, commits, ADRs, CLAUDE.md, wiki). `README.ko.md` is the only Korean twin | Korean research notes live in the owner's central wiki, not in this repo |
-| D2 | Stack raised to Sept-2026 baseline: **Java 25 LTS, Spring Boot 4.1.x, Spring Modulith 2.1.x, Gradle 9.7.x, PostgreSQL 18, jOOQ 3.21.x (OSS, BOM override), Flyway (BOM), Valkey 9, Kafka 4.3, Testcontainers 2.0.x, Keycloak 26.7, springdoc 3.1, OTel starter** | The origin chat's Java 21 / Boot 3.x / PG 16 / Redis plan is superseded |
+| D2 | Stack raised to Sept-2026 baseline: **Java 25 LTS, Spring Boot 4.1.x, Spring Modulith 2.1.x, Gradle 9.7.x, PostgreSQL 18, jOOQ 3.21.7 (OSS, BOM), Flyway (BOM), Valkey 9, Kafka 4.2.1 (BOM, compose image), Testcontainers 2.0.x, Keycloak 26.7, springdoc 3.1, OTel starter** | The origin chat's Java 21 / Boot 3.x / PG 16 / Redis plan is superseded |
 | D3 | **Kotlin 2.3.21**, because the Spring Boot 4.1 BOM manages it; revisit Kotlin 2.4 with Boot 4.2 (GA 2026-11). Revised 2026-10-01: the linter no longer holds Kotlin back | ktfmt via Spotless (version-agnostic) + **detekt 2.0.0-alpha.x**, adopted 2026-10-01: 1.23.x (unmaintained since 2025-02, Kotlin 2.0 compiler) cannot run on JDK 25. 2.0 is built on Kotlin 2.4, runs on the JDK 25 daemon and resolves types on every source set. The alpha is pinned exactly, never ships, and reverts in one PR |
 | D4 | **Scenarios + gates, not ritual TDD.** The owner writes EARS acceptance scenarios in the ticket; the agent writes tests and code; PRs must ship tests; architecture tests and scoped mutation testing watch quality | The superpowers TDD skill is used only to pick verification scenarios. "No `.kt` without a test in the same PR" is a push/CI gate, not an edit-time rule |
 | D5 | Parallel work via **Orca**, 2–3 worktrees max, one owned module per ticket | Shared code (root build files, Flyway migrations, `common`) is changed only in a solo, preceding ticket |
@@ -193,8 +193,8 @@ The monthly `/wiki-lint` + `/doctor` + dependency review runs inside the same ro
 ## 11. Toolchain versions and Phase 0 proofs of concept
 
 Versions: Java 25 (Temurin, already installed; set `JAVA_HOME`/toolchain to 25), Kotlin 2.3.21, Spring Boot 4.1.x, Spring Modulith 2.1.x,
-Gradle 9.7.x, PostgreSQL 18, jOOQ 3.21.x (override BOM 3.20), Flyway (BOM) + `flyway-database-postgresql`, GraalJS `js-community` 25.x,
-Caffeine 3.2.x, Valkey 9, Kafka 4.3 + Spring Kafka 4.1, Testcontainers 2.0.x, Keycloak 26.7.x, springdoc 3.1.x, `spring-boot-starter-opentelemetry`,
+Gradle 9.7.x, PostgreSQL 18, jOOQ 3.21.7 (BOM), Flyway (BOM) + `flyway-database-postgresql`, GraalJS `js-community` 25.x,
+Caffeine 3.2.x, Valkey 9, Kafka 4.2.1 (BOM, compose image) + Spring Kafka 4.1 (BOM), Testcontainers 2.0.x, Keycloak 26.7.x, springdoc 3.1.x, `spring-boot-starter-opentelemetry`,
 k6 2.x (upgrade local 0.56), Spotless + ktfmt, detekt 2.0.0-alpha.x (Gradle daemon on JDK 25), ArchUnit 1.5.x, Kover 0.9.x, Pitest 1.30 + pitest-kotlin.
 
 Known Boot 4 traps to pre-empt (owner's wiki): Jackson 3 (`tools.jackson`), starter modularisation (Flyway silently not running without its starter),
@@ -202,7 +202,7 @@ Known Boot 4 traps to pre-empt (owner's wiki): Jackson 3 (`tools.jackson`), star
 Gradle < 9 cannot parse the JDK 25 version string.
 
 PoCs, each ≤ half a day, results recorded as ADRs:
-1. jOOQ 3.21 + Boot 4.1 BOM override + Testcontainers PG 18: create a table inside a transaction, roll back, assert it is gone.
+1. jOOQ 3.21 + Boot 4.1 BOM + Testcontainers PG 18: create a table inside a transaction, roll back, assert it is gone.
 2. GraalJS 25 on stock JDK 25: `HostAccess.NONE`, `IOAccess.NONE`, `statementLimit` all enforced; check whether `js-isolate-community` exists on Maven Central.
 3. detekt 2.0.0-alpha.x runs against Kotlin 2.3 sources and ArchUnit 1.5.x against their classes in a Modulith multi-module build, and the five-principle detekt rules fire on a deliberately bad sample.
 4. `kotlin-lsp` plugin resolves symbols across Gradle modules in Claude Code.

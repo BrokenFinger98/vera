@@ -1905,7 +1905,7 @@ GraalVM CE 25 as runtime from day one · stock Temurin 25 with interpreter · an
 ## Rationale
 One JDK for build, test and run keeps the toolchain simple; the sandbox contract (JSON in, JSON out) is independent of the runtime.
 ## Accepted costs
-Interpreter-only execution; `js-isolate-community` availability recorded by PoC 2.
+Interpreter-only execution; `js-isolate-community` availability recorded by PoC 2. No per-script heap cap on the stock JDK (PoC 2 measured `sandbox.MaxHeapMemory` as unsupported); Phase 3 decides between process isolation and the isolate build.
 ## Outcome
 `platform/rule` `ScriptSandbox` with 17 passing tests (14 methods, the contract test parameterised four times).
 ```
@@ -1987,7 +1987,7 @@ Raw: the origin design chat (ServiceNow-style platform, four engines, ITAM first
 
 ## Claims
 1. All primary sources agree on one cycle: spec/plan separated from coding, small units, machine-verified completion, writer/reviewer separation, short instructions + skills + hooks.
-2. Enforced TDD shows no quality gain for agents (Böckeler 2026-08); scenarios + gates + mutation testing do.
+2. Enforced TDD showed no quality gain for agents (Böckeler 2026-08); the research recommends scenarios + gates + mutation testing instead (a recommendation, not a measured effect).
 3. "Graph engineering" is renamed workflow orchestration; explicit graph runtimes cost tokens without measured benefit for coding pipelines.
 4. Stack baseline moved: Boot 4.1 / Java 25 / PG 18 / jOOQ 3.21 / Testcontainers 2 verified on Maven Central.
 5. Self-improvement must be evidence-gated and human-merged (self-evaluation bias).

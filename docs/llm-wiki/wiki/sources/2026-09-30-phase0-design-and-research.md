@@ -13,7 +13,7 @@ Raw: the origin design chat (ServiceNow-style platform, four engines, ITAM first
 
 ## Claims
 1. All primary sources agree on one cycle: spec/plan separated from coding, small units, machine-verified completion, writer/reviewer separation, short instructions + skills + hooks.
-2. Enforced TDD shows no quality gain for agents (Böckeler 2026-08); scenarios + gates + mutation testing do.
+2. Enforced TDD showed no quality gain for agents (Böckeler 2026-08); the research recommends scenarios + gates + mutation testing instead (a recommendation, not a measured effect).
 3. "Graph engineering" is renamed workflow orchestration; explicit graph runtimes cost tokens without measured benefit for coding pipelines.
 4. Stack baseline moved: Boot 4.1 / Java 25 / PG 18 / jOOQ 3.21 / Testcontainers 2 verified on Maven Central.
 5. Self-improvement must be evidence-gated and human-merged (self-evaluation bias).
