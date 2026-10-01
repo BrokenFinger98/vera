@@ -1,4 +1,6 @@
-import io.gitlab.arturbosch.detekt.Detekt
+import dev.detekt.gradle.Detekt
+import dev.detekt.gradle.extensions.DetektExtension
+import dev.detekt.gradle.extensions.FailOnSeverity
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -40,7 +42,7 @@ configure(codeProjects) {
     apply(plugin = "org.jetbrains.kotlin.jvm")
     apply(plugin = "org.jetbrains.kotlin.plugin.spring")
     apply(plugin = "java-library")
-    apply(plugin = "io.gitlab.arturbosch.detekt")
+    apply(plugin = "dev.detekt")
     apply(plugin = "org.jetbrains.kotlinx.kover")
 
     extensions.configure<JavaPluginExtension> {
@@ -124,24 +126,27 @@ configure(codeProjects) {
     }
 
     // ---------- detekt: the five core principles as machine rules ----------
-    extensions.configure<io.gitlab.arturbosch.detekt.extensions.DetektExtension> {
-        buildUponDefaultConfig = true
-        allRules = false
+    // One type-resolved task per source set. Each takes its classpath, language version and
+    // jvmTarget (25) from the Kotlin compile task of the same source set.
+    val detektSourceSetTasks = listOf("detektMain", "detektTest", "detektItest", "detektArchTest")
+    extensions.configure<DetektExtension> {
+        buildUponDefaultConfig.set(true)
+        allRules.set(false)
         config.setFrom(rootProject.files("config/detekt/detekt.yml"))
-        baseline = null // baselines are forbidden: they hide debt from the gates
-        source.setFrom(
-            "src/main/kotlin",
-            "src/test/kotlin",
-            "src/itest/kotlin",
-            "src/archTest/kotlin",
-        )
+        // Any finding fails the build, whatever severity a rule is given (1.23: maxIssues: 0).
+        failOnSeverity.set(FailOnSeverity.Info)
+        // Baselines are forbidden: they hide debt from the gates. Without this line the plugin
+        // silently applies any detekt-baseline.xml that appears in a module.
+        baseline.convention(null as RegularFile?)
+        // The plain `detekt` task cannot resolve types, so it analyses nothing itself and only
+        // runs the source-set tasks.
+        source.setFrom()
     }
+    tasks.named("detekt") { dependsOn(detektSourceSetTasks) }
     tasks.withType<Detekt>().configureEach {
-        // detekt 1.23.x embeds a Kotlin 2.0 compiler; 21 is its highest known JVM target.
-        jvmTarget = "21"
         reports {
-            md.required.set(true)
-            xml.required.set(true)
+            markdown.required.set(true)
+            checkstyle.required.set(true)
             html.required.set(false)
             sarif.required.set(false)
         }
@@ -153,11 +158,9 @@ configure(codeProjects) {
         reports { total { verify { onCheck.set(false) } } }
     }
 
-    // `check` = everything the Stop hook and CI run for a module. detektMain adds type resolution
-    // for declared nullability only (parameters, declared locals, same-file returns); `!!` on
-    // inferred types is missed because detekt 1.23's Kotlin 2.0.21 compiler cannot read Kotlin 2.3
-    // stdlib metadata. Full resolution awaits detekt 2.x GA.
-    tasks.named("check") { dependsOn("detektMain", "archTest") }
+    // `check` = everything the Stop hook and CI run for a module. detektItest compiles and analyses
+    // the itest sources without running them, so `check` still needs no Docker.
+    tasks.named("check") { dependsOn(detektSourceSetTasks + "archTest") }
 }
 
 // ---------- Aggregated coverage across all modules ----------

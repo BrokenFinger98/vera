@@ -18,7 +18,7 @@ Phase 0 — repository, toolchain and harness. See `.harness/state/progress.md`.
 
 ## Build
 
-Requires JDK 25 (compile/test toolchain), JDK 21 (Gradle daemon — detekt 1.23 cannot run on 25) and Docker (integration tests).
+Requires JDK 25 and Docker (integration tests).
 
 ```bash
 ./scripts/check.sh   # format check, detekt, unit tests, architecture tests
