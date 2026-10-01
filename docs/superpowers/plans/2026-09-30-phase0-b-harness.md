@@ -198,13 +198,14 @@ git commit -m "docs: add constitution, AGENTS.md symlink and AI review contract"
 # Vera — Coding Conventions
 
 Companion to `CLAUDE.md` (what is forbidden/decided). This is how to write the code. Machine-checked
-where possible: detekt (`config/detekt/detekt.yml`), Konsist (`bootstrap/src/archTest`), Modulith `verify()`.
+where possible: detekt (`config/detekt/detekt.yml`), ArchUnit (`bootstrap/src/archTest`: `LayerRulesTest`, `NamingRulesTest`,
+`ImportScopeTest`), Modulith `verify()`.
 
 ## Core principles (team standard, encoded in detekt)
 
 1. One method = one job, ≤10 lines (`LongMethod allowedLines 10`).
 2. No `else`; early return (`NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
-3. Wrap primitives and collections in domain objects (`value class` with one property — Konsist).
+3. Wrap primitives and collections in domain objects (`value class` with one property — review; no ArchUnit rule sees it).
 4. Behaviour methods over getters (a domain object does things; it does not expose fields for others to decide).
 5. Composition over inheritance (`AbstractClassCanBeConcreteClass`, `AbstractClassCanBeInterface`, `UnnecessaryInheritance`).
 
@@ -241,7 +242,7 @@ Dependency direction: `internal → application → domain`. Other modules see o
 
 - Unit (`src/test`): domain and application logic, no Spring context, AssertJ.
 - Integration (`src/itest`): `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`; real PostgreSQL 18.
-- Architecture (`src/archTest`): Konsist rules in `bootstrap`.
+- Architecture (`src/archTest`): ArchUnit rules in `bootstrap` — `LayerRulesTest`, `NamingRulesTest`, `ImportScopeTest`.
 - Name tests as behaviour: `` `rejects names longer than 63 characters` ``. One behaviour per test.
 - Acceptance criteria from the ticket (EARS) map 1:1 to test names.
 
@@ -249,9 +250,9 @@ Dependency direction: `internal → application → domain`. Other modules see o
 
 Never swallow exceptions. Log at the boundary once, with structured key=value pairs, no PII, no secrets.
 
-## Kotlin constructs to avoid until tooling catches up (Konsist 0.17 parses Kotlin 2.0 syntax; detekt 2.0 parses 2.4)
+## Kotlin syntax and the linter
 
-Context parameters, guard conditions in `when`, non-local `break`/`continue`. Record any parser failure in an ADR.
+detekt 2.0.0-alpha.x (Kotlin 2.4.10 compiler) parses current Kotlin, so tooling restricts no construct; one known difference is that the alpha counts KDoc `/**` and `*/` lines toward `LongMethod` (and `LargeClass`).
 ```
 
 - [ ] **Step 2: Write the domain documents**
@@ -650,9 +651,9 @@ paths:
 ---
 # Domain packages
 
-- MUST NOT import `org.springframework.*`, `org.jooq.*`, `jakarta.*` (Konsist `LayerRulesTest`).
-- MUST wrap identifiers and names in `value class` types with one property (Konsist `NamingRulesTest`).
-- Exceptions MUST extend `IllegalArgumentException` (bad input) or `IllegalStateException` (bad state).
+- MUST NOT import `org.springframework.*`, `org.jooq.*`, `jakarta.*` (ArchUnit `LayerRulesTest`).
+- MUST wrap identifiers and names in `value class` types with one property (review; no ArchUnit rule sees it).
+- Exceptions MUST extend `IllegalArgumentException` (bad input) or `IllegalStateException` (bad state) — ArchUnit `LayerRulesTest`.
 - Behaviour lives on the object (`asset.retire(at)`), not in a service that reads its fields.
 - Verify: `./scripts/check.sh` (archTest).
 ```
@@ -1510,7 +1511,7 @@ jobs:
             If mode is promote:
               - Find lessons with count >= 3 and status open, and gate rules that fired >= 3 times for the same cause in the last 30 days.
               - For EACH such item open exactly ONE pull request on a branch harness/promote-<slug> proposing exactly one of:
-                a CLAUDE.md line, a .claude/rules/<file>.md entry, a detekt or Konsist rule, a guards.sh/hook pattern, or a test.
+                a CLAUDE.md line, a .claude/rules/<file>.md entry, a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test.
                 Cite the event lines and lesson entry in the PR body. Mark the lesson status: promoted (pending) in the same PR.
               - If nothing qualifies, do nothing and print "promote: nothing due".
             If mode is prune:
@@ -1730,9 +1731,9 @@ Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected int
 
 ## [2026-09-30] Phase 0-A — repository, toolchain, PoCs ✅
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-a-repo-and-build.md`
-- Gradle 9.7.1 · Kotlin 2.3.21 · Boot 4.1.1 · Modulith 2.1.1 · PG 18 Testcontainers · detekt/ktfmt/Konsist/Kover
+- Gradle 9.7.1 · Kotlin 2.3.21 · Boot 4.1.1 · Modulith 2.1.1 · PG 18 Testcontainers · detekt/ktfmt/ArchUnit/Kover
 - Evidence: `RESULT check exit=0` · `RESULT itest exit=0` · CI run green (paste run URL)
-- PoC 1 transactional DDL: pass · PoC 2 GraalJS sandbox: pass (js-isolate-community: <200|404>) · PoC 3 detekt/Konsist on Kotlin 2.3: <pass|finding> · PoC 4 kotlin-lsp: <pass|fallback>
+- PoC 1 transactional DDL: pass · PoC 2 GraalJS sandbox: pass (js-isolate-community: <200|404>) · PoC 3 detekt/ArchUnit on Kotlin 2.3: <pass|finding> · PoC 4 kotlin-lsp: <pass|fallback>
 
 ## [2026-09-30] Phase 0-B — harness, gates, wiki, self-improvement loop ✅
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-b-harness.md`
@@ -1850,7 +1851,7 @@ Böckeler (martinfowler.com, 2026-08-10) found no quality difference between age
 ## Options considered
 Enforce TDD via skills/hooks · scenarios + gates · scenarios only.
 ## Decision
-The owner writes EARS acceptance criteria in the ticket; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` + Konsist in `archTest`, Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
+The owner writes EARS acceptance criteria in the ticket; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` (`test`) + ArchUnit (`archTest`), Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
 ## Rationale
 What the machine can enforce is "tests come with the code" and "tests are not weakened"; the order of writing is unprovable and, per the evidence, not valuable.
 ## Accepted costs

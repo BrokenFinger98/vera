@@ -6,7 +6,7 @@
 
 **Architecture:** One Gradle multi-project (`platform/*`, `apps/itam`, `ingestion`, `bootstrap`) sharing root package `com.brokenfinger.vera`; Spring Modulith treats each direct sub-package as a module and `verify()` enforces boundaries. Three test suites per module (`test`, `itest` with Testcontainers PostgreSQL 18, `archTest` with ArchUnit). Formatting and linting are deterministic (ktfmt via Spotless, detekt with the five core principles encoded, any finding fails the build). `scripts/*.sh` are the only entry points agents use.
 
-**Tech Stack (verified on Maven Central / services.gradle.org, 2026-09-30):** Java 25 (Temurin, installed), Gradle 9.7.1, Kotlin 2.3.21 (Boot 4.1.1 BOM-managed), Spring Boot 4.1.1 (Framework 7.0.9), Spring Modulith 2.1.1, jOOQ 3.21.7 (BOM), Flyway 12.4.0 (BOM) + `flyway-database-postgresql`, PostgreSQL 18 (`postgres:18-alpine`), Testcontainers 2.0.5 (`testcontainers-postgresql`, `testcontainers-junit-jupiter`), JUnit 6.0.3 + AssertJ 3.27.7 (BOM), GraalVM Polyglot 25.4.4.1.1 (`polyglot`, `js-community`), Spotless 8.10.3 + ktfmt, detekt 2.0.0-alpha.6 (since 2026-10-01, see the Task 3 decision; 1.23.8 before), ArchUnit 1.5.1, Kover 0.9.11, springdoc 3.1.1 (added later, not in this plan), Gradle daemon on JDK 25.
+**Tech Stack (verified on Maven Central / services.gradle.org, 2026-09-30):** Java 25 (Temurin, installed), Gradle 9.7.1, Kotlin 2.3.21 (Boot 4.1.1 BOM-managed), Spring Boot 4.1.1 (Framework 7.0.9), Spring Modulith 2.1.1, jOOQ 3.21.7 (BOM), Flyway 12.4.0 (BOM) + `flyway-database-postgresql`, PostgreSQL 18 (`postgres:18-alpine`), Testcontainers 2.0.5 (`testcontainers-postgresql`, `testcontainers-junit-jupiter`), JUnit 6.0.3 + AssertJ 3.27.7 (BOM), GraalVM Polyglot 25.4.4.1.1 (`polyglot`, `js-community`), Spotless 8.10.3 + ktfmt, detekt 2.0.0-alpha.6 (since 2026-10-01, see the Task 3 decision; 1.23.8 before), ArchUnit 1.5.1, Kover 0.9.11, springdoc 3.1.1 (added later, not in this plan), Gradle daemon pinned to JDK 25.
 
 **Spec:** `docs/superpowers/specs/2026-09-30-vera-dev-environment-design.md` §4, §8, §11, §12 steps 2–3 and 6.
 
@@ -22,6 +22,7 @@ vera/
 ├── gradle/wrapper/{gradle-wrapper.jar,gradle-wrapper.properties}  gradlew  gradlew.bat
 ├── gradle/libs.versions.toml           # single source of versions
 ├── gradle.properties                   # configuration cache, build cache, parallel, JVM args
+├── gradle/gradle-daemon-jvm.properties # daemon pinned to JDK 25, whatever JAVA_HOME launches Gradle
 ├── settings.gradle.kts                 # project names and paths
 ├── build.gradle.kts                    # shared conventions for all subprojects (Kotlin, Boot BOM, test suites, detekt, spotless, kover)
 ├── config/detekt/detekt.yml            # five core principles as rules
@@ -367,11 +368,12 @@ kotlin.code.style=official
 kotlin.daemon.jvmargs=-Xmx2g
 # GraalJS on a stock JDK runs the interpreter only; silence the warning in tests (spec D6).
 systemProp.polyglot.engine.WarnInterpreterOnly=false
-# The daemon runs on the JDK that launches Gradle (JAVA_HOME; scripts/lib.sh defaults it to 25).
-# Compilation and tests use the Java 25 toolchain; actions/setup-java exports these variables.
+# gradle/gradle-daemon-jvm.properties pins the daemon to JDK 25 whatever JDK launches Gradle
+# (JAVA_HOME), so local and CI daemons agree; compilation and tests use the Java 25 toolchain.
+# Both find JDK 25 by auto-detection or through these variables, which actions/setup-java exports.
 org.gradle.java.installations.fromEnv=JAVA_HOME_25_X64,JAVA_HOME_25_ARM64
-# Toolchains are never downloaded: a machine without JDK 25 fails with "Cannot find a Java
-# installation ... matching: {languageVersion=25, ...}. Toolchain auto-provisioning is not enabled."
+# Without this a machine with no JDK 25 fails with "Unable to download toolchain ... from 'null'";
+# with it Gradle says plainly that it cannot find a Java installation matching languageVersion=25.
 org.gradle.java.installations.auto-download=false
 ```
 
@@ -771,7 +773,7 @@ Run each of these from the repository root with `JAVA_HOME=/Library/Java/JavaVir
 ```
 Expected: the Gradle help banner then `exit=0`; `spotlessCheck` silent with `exit=0` (if it fails, run `spotlessApply` and inspect the diff); the task list containing `detekt`, `detektMain`, `detektTest`, `detektItest`, `detektArchTest`, `test`, `itest`, `archTest` and `koverVerify`. If plugin resolution fails, the error names the plugin id and version — fix the catalog, do not change versions elsewhere.
 
-Decision (2026-10-01): detekt 2.0.0-alpha.6 replaces 1.23.8, and the Gradle daemon runs on JDK 25 again. detekt 1.23 has had no release since 2025-02 and cannot run on JDK 25: 1.23.8 bundles Kotlin 2.0.21, whose shaded IntelliJ `JavaVersion` parser rejects any feature version above 24, so on a Java 25 daemon the task died with `> 25.0.3` before analysis started. The 2026-09-30 decision therefore pinned the daemon to JDK 21 through `gradle/gradle-daemon-jvm.properties`; that file is gone, and `./gradlew --version` now prints `Daemon JVM: /Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home (no Daemon JVM specified, using current Java home)`. 2.0.0-alpha.6 (2026-08-04) is built on Kotlin 2.4.10 and tested against JDK 25; its classpath needed no Kotlin pin. It is an alpha, so the catalog pins it exactly; it is a development tool that never ships in `vera.jar`; reverting it is one PR (catalog, root build script, `detekt.yml`, `check.sh`, `ci.yml`). Type resolution is now full: every source set has its own type-resolved task (`detektMain`, `detektTest`, `detektItest`, `detektArchTest`), all four on `check`, and each takes classpath and `jvmTarget` 25 from its Kotlin compile task. A throwaway `fun firstLength(items: List<String>): Int = items.firstOrNull()!!.length` in `bootstrap` main passed `:bootstrap:detektMain` with `exit=0` on 1.23.8 (its compiler could not read Kotlin 2.3 stdlib metadata) and fails it on 2.0.0-alpha.6 with `exit=1`: `FirstLength.kt:3:45 Calling !! on a nullable type will throw a NullPointerException at runtime in case the value is null. It should be avoided. [UnsafeCallOnNullableType]`. `config.validation` rejected 13 properties of the 1.23 file (the `build` section, ten threshold keys, `UnusedPrivateMember`, `UnnecessaryAbstractClass`); Step 5 is the migrated file. Any finding fails the build through `failOnSeverity = Info` (2.x has no `maxIssues`): with `MagicNumber` set to `severity: warning` and `ForbiddenComment` to `info`, a probe holding one of each still fails with `exit=1`, and with the plugin default (`Error`) it would pass. The plugin's `detekt-baseline.xml` convention is cleared: a generated `detekt-baseline-main.xml` suppresses its finding without that line and is ignored with it. ArchUnit stays in place of Konsist (Task 6): Konsist 0.17.3 still depends on `kotlin-compiler-embeddable:2.0.21`. The Gradle 10 blocker left with 1.23 as well: 1.23.8 called `ReportingExtension.file(String)`, which Gradle 10 removes, and 2.0 uses `ReportingExtension.baseDirectory`.
+Decision (2026-10-01): detekt 2.0.0-alpha.6 replaces 1.23.8, and the Gradle daemon runs on JDK 25 again. detekt 1.23 has had no release since 2025-02 and cannot run on JDK 25: 1.23.8 bundles Kotlin 2.0.21, whose shaded IntelliJ `JavaVersion` parser rejects any feature version above 24, so on a Java 25 daemon the task died with `> 25.0.3` before analysis started. The 2026-09-30 decision therefore pinned the daemon to JDK 21 through `gradle/gradle-daemon-jvm.properties`; the same file now pins it to 25 by daemon-JVM criteria (Step 6b), so local and CI daemons agree whatever `JAVA_HOME` launches Gradle. 2.0.0-alpha.6 (2026-08-04) is built on Kotlin 2.4.10 and tested against JDK 25; its classpath needed no Kotlin pin. It is an alpha, so the catalog pins it exactly; it is a development tool that never ships in `vera.jar`; reverting it is one PR (catalog, root build script, `detekt.yml`, `check.sh`, `ci.yml`, daemon criteria). Type resolution is now full: every source set has its own type-resolved task (`detektMain`, `detektTest`, `detektItest`, `detektArchTest`), all four on `check`, and each takes classpath and `jvmTarget` 25 from its Kotlin compile task. A throwaway `fun firstLength(items: List<String>): Int = items.firstOrNull()!!.length` in `bootstrap` main passed `:bootstrap:detektMain` with `exit=0` on 1.23.8 (its compiler could not read Kotlin 2.3 stdlib metadata) and fails it on 2.0.0-alpha.6 with `exit=1`: `FirstLength.kt:3:45 Calling !! on a nullable type will throw a NullPointerException at runtime in case the value is null. It should be avoided. [UnsafeCallOnNullableType]`. `config.validation` rejected 13 properties of the 1.23 file (the `build` section, ten threshold keys, `UnusedPrivateMember`, `UnnecessaryAbstractClass`); Step 5 is the migrated file. Any finding fails the build through `failOnSeverity = Info` (2.x has no `maxIssues`): with `MagicNumber` set to `severity: warning` and `ForbiddenComment` to `info`, a probe holding one of each still fails with `exit=1`, and with the plugin default (`Error`) it would pass. The plugin's `detekt-baseline.xml` convention is cleared: a generated `detekt-baseline-main.xml` suppresses its finding without that line and is ignored with it. ArchUnit stays in place of Konsist (Task 6): Konsist 0.17.3 still depends on `kotlin-compiler-embeddable:2.0.21`. The Gradle 10 blocker left with 1.23 as well: 1.23.8 called `ReportingExtension.file(String)`, which Gradle 10 removes, and 2.0 uses `ReportingExtension.baseDirectory`.
 
 2.x limits name the largest allowed value, where 1.23 named the first failing one (`lines >= threshold` became `lines > allowedLines`), so every limit in Step 5 was calibrated by measurement: one throwaway probe just inside and one just outside each limit, run with 1.23.8 and the old file (`:platform:metadata:detekt`) and with 2.0.0-alpha.6 and Step 5 (`:platform:metadata:detektMain`). Both versions gave the same result for every probe: the inside set `exit=0` with no findings, the outside set `exit=1` with exactly one finding per probe, all from the target rule.
 
@@ -787,7 +789,23 @@ Decision (2026-10-01): detekt 2.0.0-alpha.6 replaces 1.23.8, and the Gradle daem
 | `TooManyFunctions`, file | `thresholdInFiles: 20` | `allowedFunctionsPerFile: 19` | 19 | 20 |
 | `TooManyFunctions`, enum | inherited `11` | `allowedFunctionsPerEnum: 10` | 10 | 11 |
 
-Two 2.x default changes are pinned back to 1.23 behaviour: the enum limit above (2.x inherits `11` with the new meaning) and `MagicNumber.ignoreLocalVariableDeclaration: false` (2.x defaults to `true`). One difference cannot be calibrated away: 2.0.0-alpha.6 counts the `/**` and `*/` lines of a KDoc block as code, where 1.23 skipped KDoc entirely. A 10-line function holding a three-line KDoc measures 12, and a 299-line object with three KDoc'd constants fails `LargeClass` on 2.0 but passed on 1.23. Code without KDoc keeps the boundaries above exactly.
+Two 2.x default changes are pinned back to 1.23 behaviour: the enum limit above (2.x inherits `11` with the new meaning) and `MagicNumber.ignoreLocalVariableDeclaration: false` (2.x defaults to `true`). One difference cannot be calibrated away: 2.0.0-alpha.6 counts the `/**` and `*/` lines of a KDoc block as code, where 1.23 skipped KDoc entirely. A 10-line function holding a three-line KDoc measures 12, and a 299-line object with three KDoc'd constants fails `LargeClass` on 2.0 but passed on 1.23. Code without KDoc keeps the boundaries above exactly. One detection is new: `AbstractClassCanBeInterface` also checks sealed classes (`ignoreSealedClasses: false`, kept). A throwaway `sealed class ProbeOutcome` with two `data object` subclasses fires it (`A sealed class without a concrete member can be refactored to a sealed interface.`); the repository's one sealed hierarchy, `ScriptException`, does not, because it extends `IllegalStateException`, which an interface cannot, and takes constructor parameters.
+
+- [ ] **Step 6b: Pin the daemon to JDK 25**
+
+Without a pin the daemon runs on whatever JDK launches Gradle, and this Mac's shell exports a JDK 21 `JAVA_HOME` while CI runs 25. `./gradlew updateDaemonJvm --jvm-version=25` fails on Gradle 9.7.1 with "Toolchain download repositories have not been configured", so write `gradle/gradle-daemon-jvm.properties` by hand with exactly:
+
+```properties
+toolchainVersion=25
+```
+
+Verify from the JDK 21 launcher:
+
+```bash
+JAVA_HOME=/Users/yu-sun00/Library/Java/JavaVirtualMachines/liberica-21.0.6 ./gradlew --version
+JAVA_HOME=/Users/yu-sun00/Library/Java/JavaVirtualMachines/liberica-21.0.6 ./scripts/check.sh; echo exit=$?
+```
+Result (executed 2026-10-01): `Launcher JVM:  21.0.6 (BellSoft 21.0.6+10-LTS)` with `Daemon JVM:    Compatible with Java 25, any vendor, nativeImageCapable=false (from gradle/gradle-daemon-jvm.properties)`, the same `Daemon JVM` line from a Temurin 25 launcher, and `check.sh` `exit=0` from both. An init script printing `java.home` inside the build showed a cold daemon on `/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home` from either launcher, the only JDK 25 that `javaToolchains` detects. "Any vendor" also lets Gradle reuse an idle Java 25 daemon of another vendor: once it picked one that kotlin-lsp had started on its bundled JetBrains Runtime 25.0.4.1. Without `auto-download=false` a machine with no JDK 25 fails with `Unable to download toolchain ... from 'null'`; with it, Gradle says `Cannot find a Java installation on your machine ... matching: {languageVersion=25, ...}. Toolchain auto-provisioning is not enabled.` Committed separately as `build: pin the Gradle daemon to JDK 25 and drop stale Konsist references`.
 
 - [ ] **Step 7: Commit**
 
@@ -1843,11 +1861,10 @@ Observed (warm): `RESULT format exit=0 seconds=0`, `RESULT check exit=0 seconds=
 Both `<n>` readings are far under the 60 s target, so no progress.md risk entry is needed for the
 Stop hook (spec §6 row 1). The Gradle daemon was already warm from the Task 1–6 runs, so every task
 in the `check` graph was `UP-TO-DATE`; a genuinely cold daemon would run longer. The daemon then ran
-on JDK 21, a pin removed on 2026-10-01 (Task 3 decision); it now runs on the launcher JVM, i.e.
-whatever `JAVA_HOME` `lib.sh` leaves in place. Re-run on 2026-10-01 after `./gradlew clean`, on
-detekt 2.0.0-alpha.6 with `env -u JAVA_HOME` (daemon on 25): `RESULT format exit=0 seconds=0`,
-`RESULT check exit=0 seconds=7`. With `JAVA_HOME` on a JDK 21 the daemon follows it to 21 and
-detekt 2.0 still executes there (`--rerun-tasks`: 38 tasks executed, `exit=0`); CI runs 25 only.
+on JDK 21 (the 2026-09-30 pin); since 2026-10-01 `gradle/gradle-daemon-jvm.properties` pins it to 25
+(Task 3 Step 6b) whatever `JAVA_HOME` launches Gradle. Re-run on 2026-10-01 after `./gradlew clean`,
+on detekt 2.0.0-alpha.6 with a 25 daemon: `RESULT format exit=0 seconds=0`, `RESULT check exit=0
+seconds=7`. With `JAVA_HOME` on Liberica 21 the daemon is still 25 and `check.sh` exits 0.
 
 `./scripts/test.sh :platform:metadata`, `./scripts/itest.sh` and `./scripts/build.sh` each ran clean:
 
