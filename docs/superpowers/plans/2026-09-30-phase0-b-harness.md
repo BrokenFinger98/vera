@@ -33,7 +33,7 @@ vera/
 │   ├── settings.json
 │   ├── hooks/{inject-state.sh,stop-gate.sh,format.sh,log-gate-event.sh}
 │   ├── rules/{domain.md,persistence.md,web.md,test.md,migration.md}
-│   ├── skills/{issue,commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/SKILL.md
+│   ├── skills/{ticket,gated-commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/SKILL.md
 │   └── workflows/{audit-consistency.js,release-review.js,deep-research.js}
 ├── .githooks/pre-push
 ├── scripts/{guards.sh,test-hooks.sh}
@@ -735,23 +735,23 @@ git commit -m "docs: add path-scoped agent rules for domain, persistence, web, t
 
 ### Task 5: Project skills — the GitHub flow and task lifecycle
 
-Same-name project skills override the global GitLab ones (`issue`, `commit`) as programmers-tracker does.
+A personal skill outranks a same-name project skill (Claude Code docs, "Resolve skills that share a name": enterprise over personal over project), so the GitHub flow uses the distinct names `ticket` and `gated-commit` instead of the global GitLab `issue` and `commit`; `pull-request`, `start-task`, `finish-task` and `wiki-*` do not collide, and a skill also wins over a same-name file in `~/.claude/commands/`.
 
 **Files:**
-- Create: `.claude/skills/issue/SKILL.md`, `.claude/skills/commit/SKILL.md`, `.claude/skills/pull-request/SKILL.md`, `.claude/skills/start-task/SKILL.md`, `.claude/skills/finish-task/SKILL.md`
+- Create: `.claude/skills/ticket/SKILL.md`, `.claude/skills/gated-commit/SKILL.md`, `.claude/skills/pull-request/SKILL.md`, `.claude/skills/start-task/SKILL.md`, `.claude/skills/finish-task/SKILL.md`
 
-- [ ] **Step 1: Write `issue/SKILL.md`**
+- [ ] **Step 1: Write `ticket/SKILL.md`**
 
 ```markdown
 ---
-name: issue
+name: ticket
 description: Create a GitHub issue from the task template (EARS acceptance criteria, owned module, verify commands), then a branch <type>/<n>-<slug> from fresh main. Use when starting any work — the constitution forbids work without an issue.
 disable-model-invocation: true
 ---
 
 # Create issue and branch
 
-Flow: issue → branch → /start-task → work → /commit → /finish-task → /pull-request → squash merge.
+Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-task → /pull-request → squash merge.
 
 ## Process
 1. Ask the type (one question): feat | fix | refactor | test | docs | chore | harness.
@@ -794,16 +794,16 @@ Flow: issue → branch → /start-task → work → /commit → /finish-task →
 `task` always; type label; `harness` for gate/hook work; milestone = phase.
 ```
 
-- [ ] **Step 2: Write `commit/SKILL.md`**
+- [ ] **Step 2: Write `gated-commit/SKILL.md`**
 
 ```markdown
 ---
-name: commit
+name: gated-commit
 description: Stage-aware Conventional Commit in English with no AI attribution. Runs the project gates (test pair, English-only, trailers) before the preview. Use for every commit in this repository.
 disable-model-invocation: true
 ---
 
-# Commit (project)
+# Gated commit (project)
 
 ## Rules
 - English only. Conventional Commits `<type>(<scope>): <subject>` — imperative, ≤50 chars, no period; body ≤72 cols says what and why.
@@ -859,7 +859,7 @@ disable-model-invocation: true
 ```markdown
 ---
 name: start-task
-description: Load a ticket into the session (issue body, acceptance criteria, owned module), refresh state, and produce a plan or decide to skip planning. Use at the start of every ticket after /issue.
+description: Load a ticket into the session (issue body, acceptance criteria, owned module), refresh state, and produce a plan or decide to skip planning. Use at the start of every ticket after /ticket.
 disable-model-invocation: true
 ---
 
@@ -912,8 +912,8 @@ Run /pull-request.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add .claude/skills/issue .claude/skills/commit .claude/skills/pull-request .claude/skills/start-task .claude/skills/finish-task
-git commit -m "feat: add project skills for issue, commit, start-task, finish-task and pull-request"
+git add .claude/skills/ticket .claude/skills/gated-commit .claude/skills/pull-request .claude/skills/start-task .claude/skills/finish-task
+git commit -m "feat: add project skills for ticket, gated-commit and the task lifecycle"
 ```
 
 ---
@@ -1056,7 +1056,7 @@ description: Ingest decisions, deliverables and reusable know-how from the curre
    Concepts merge into existing pages (update `updated:` and `sources:`); contradictions get `⚠️ (superseded)`.
 6. Index + links: register new pages (date first), ensure ≥1 inbound link.
 7. Log: `## [YYYY-MM-DD] ingest | <title> → N updated, M created` in `docs/llm-wiki/log.md`.
-8. Stage `docs/llm-wiki` so the push gate sees it; the caller commits with /commit.
+8. Stage `docs/llm-wiki` so the push gate sees it; the caller commits with /gated-commit.
 English only. Cite measured evidence; record failed attempts too.
 ```
 
@@ -1336,7 +1336,7 @@ Reviewer / critic findings and disposition:
 
 ```yaml
 name: Task
-description: One behaviour change, one PR, ≤400 lines. Filled by /issue.
+description: One behaviour change, one PR, ≤400 lines. Filled by /ticket.
 labels: ["task"]
 body:
   - type: input
@@ -1717,7 +1717,7 @@ Phase 0 (environment and harness) is complete when the first metadata-engine tic
 (`.harness/events.jsonl` has entries for stop-gate, pre-push-guard, wiki-gate, ci).
 
 ## Current ticket
-- Phase 1, ticket 1 (to be created with /issue): metadata engine — `sys_table` / `sys_field` system tables (Flyway),
+- Phase 1, ticket 1 (to be created with /ticket): metadata engine — `sys_table` / `sys_field` system tables (Flyway),
   `TableDefinition` / `FieldDefinition` domain, and a create-table use case that inserts the definitions and runs
   `CREATE TABLE u_<name>` in one transaction.
 - EARS (draft, refine in /brainstorming):
@@ -1749,7 +1749,7 @@ Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected int
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-b-harness.md`
 - CLAUDE.md (N lines) · 5 rules · 8 skills · 4 hooks · pre-push guards (first firings logged) · 4 workflows in CI · 3 saved fan-out workflows
 - ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
-- Next: Phase 1 ticket 1 via /brainstorming → /issue (see goal.md)
+- Next: Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md)
 
 <!-- ARCHIVE -->
 ```
@@ -2063,7 +2063,7 @@ Expected: JSON response with `required_status_checks` echoing the five contexts;
 
 - [ ] **Step 3: Acceptance run (spec §13) — a harness ticket through the whole loop**
 
-Use the flow itself to prove itself: `/issue` → "harness: verify Phase 0 gates fire" (owned module `:bootstrap`, EARS = the §13 lines) → in the worktree make a trivial test-covered change (add `TableName.equals` behaviour test or similar) → let the Stop hook run → `/commit` → push (guards + wiki gate) → `/finish-task` (retro → first `lessons.md` entry) → `/pull-request` → CI + claude-review → owner approves → squash merge.
+Use the flow itself to prove itself: `/ticket` → "harness: verify Phase 0 gates fire" (owned module `:bootstrap`, EARS = the §13 lines) → in the worktree make a trivial test-covered change (add `TableName.equals` behaviour test or similar) → let the Stop hook run → `/gated-commit` → push (guards + wiki gate) → `/finish-task` (retro → first `lessons.md` entry) → `/pull-request` → CI + claude-review → owner approves → squash merge.
 
 Expected evidence, pasted into `progress.md`:
 - `.harness/events.jsonl` contains at least one `stop-gate` or `pre-push-guard` or `wiki-gate` event from this ticket (force one: push once without wiki changes and without the trailer, observe the block, then add the trailer).
@@ -2073,15 +2073,15 @@ Expected evidence, pasted into `progress.md`:
 
 - [ ] **Step 4: Close Phase 0**
 
-Update `.harness/state/progress.md` Phase 0-B entry with the evidence, rewrite `goal.md` "Where we are" to "Phase 1 — metadata engine", commit via `/commit` on a `docs/` branch, PR, merge.
+Update `.harness/state/progress.md` Phase 0-B entry with the evidence, rewrite `goal.md` "Where we are" to "Phase 1 — metadata engine", commit via `/gated-commit` on a `docs/` branch, PR, merge.
 
 ---
 
 ## Self-review against the spec
 
-- §3 operating model → CLAUDE.md flow + skills (`issue`, `start-task`, `finish-task`, `pull-request`) ✓
+- §3 operating model → CLAUDE.md flow + skills (`ticket`, `start-task`, `finish-task`, `pull-request`) ✓
 - §4 layout → every harness path created (Tasks 1–11) ✓; `docs/specs/<module>.md` template only (modules get specs with their first ticket) ✓
-- §5 harness placement → global reused, project overrides by name, rules path-scoped, settings without `defaultMode`, `cd` rule ✓; global `harness-dev` path fix (Task 12) ✓
+- §5 harness placement → global reused, GitHub-flow skills under distinct names (a personal skill outranks a same-name project skill), rules path-scoped, settings without `defaultMode`, `cd` rule ✓; global `harness-dev` path fix (Task 12) ✓
 - §6 gate stack → 0a format.sh + global secrets ✓ · 0b deny list + global block-danger ✓ · 1 stop-gate.sh ✓ · 2 guards.sh + wiki gate ✓ · 3 ci.yml (Plan A) + test-guard + claude-review ✓ · 4 branch protection ✓ · 5 PR checklist ✓; every failure message says what to change ✓
 - §7 tickets/DoD → issue template, PR template, size guard, ADR rule ✓
 - §9 D5/D8 → worktree include, blocked-by in template and `start-task`, three workflows ✓

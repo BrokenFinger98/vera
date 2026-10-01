@@ -75,7 +75,7 @@ vera/
 │   ├── settings.json              # allow/deny/hooks ONLY — never defaultMode (ignored in project files, degrades session to manual)
 │   ├── hooks/{inject-state,stop-gate,format,log-gate-event}.sh
 │   ├── rules/{domain,persistence,web,test,migration}.md   # path-scoped via `paths:` frontmatter
-│   ├── skills/{issue,commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/
+│   ├── skills/{ticket,gated-commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/
 │   ├── agents/                    # empty: the seven global agents are reused; project-specific overrides only by same filename
 │   └── workflows/{audit-consistency,release-review,deep-research}.md   # the only three saved fan-out Workflows (§9)
 ├── .githooks/pre-push             # guards.sh (fail-closed) + wiki gate (fail-open, `Wiki-Skip:` trailer); both log to events.jsonl
@@ -91,7 +91,7 @@ a `decisions.md` state file (ADRs in the wiki are the single authority, as in pr
 
 | Layer | Global `~/.claude` (already exists, reused as is) | Project (this repo) |
 |---|---|---|
-| Skills | harness-dev / harness-review / harness-rca, superpowers plugin | `issue`, `commit`, `pull-request` (GitHub; **override the global GitLab skills by name**), `start-task`, `finish-task`, `wiki-*` (repo wiki target) |
+| Skills | harness-dev / harness-review / harness-rca, superpowers plugin | `ticket`, `gated-commit`, `pull-request` (GitHub flow; **distinct names, because a personal skill outranks a same-name project skill** — enterprise > personal > project — so a project `issue` or `commit` would be shadowed by the global GitLab skills), `start-task`, `finish-task`, `wiki-*` (repo wiki target; a skill also outranks a same-name file in `~/.claude/commands/`) |
 | Agents | architect, critic, tester, reviewer, evidence-reviewer, scout, worker | none initially |
 | Hooks | `block-danger.sh` (dangerous commands + Evidence Gate), `post-edit-check.sh` (secrets), wiki archive hooks | `inject-state.sh` (SessionStart: goal + progress above marker + wiki index; idempotent `core.hooksPath`), `stop-gate.sh` (Stop: `scripts/check.sh` when `src/` is dirty), `format.sh` (PostToolUse Edit/Write on `.kt`: `spotlessApply` for the touched file) |
 | Rules | — | `.claude/rules/*.md` with `paths:` — enforceable summaries of ADRs (MUST / MUST NOT / verify command) |
@@ -100,7 +100,7 @@ a `decisions.md` state file (ADRs in the wiki are the single authority, as in pr
 Global fix required (owner's harness-debt principle): `harness-dev` skill refers to `.claude/state/`; the real convention is `.harness/state/`. Correct the skill.
 
 Relation to the global company CLAUDE.md: Korean chat replies, English comments/commits, the five core principles and Effective Kotlin
-auto-apply all still hold. Only the GitLab workflow (`/issue → /merge-request`) is overridden by the project skills.
+auto-apply all still hold. Only the GitLab workflow (`/issue → /merge-request`) is superseded here, by project skills under distinct names (`/ticket → … → /gated-commit → … → /pull-request`), because a personal skill outranks a same-name project skill (see the Skills row above).
 
 ## 6. Gate stack (weakest → strongest)
 
