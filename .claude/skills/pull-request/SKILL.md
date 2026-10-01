@@ -21,5 +21,5 @@ disable-model-invocation: true
 ## Create and merge
 1. `gh pr create --fill-first --body-file <tmp> [--label test-change]`
 2. `gh pr checks --watch` until all required checks pass; if `claude-review` requests changes, address blocking items, push, re-watch.
-3. Ask the owner for the design review (five items in CLAUDE.md §Role). On approval: `gh pr merge --squash --delete-branch`.
+3. Ask the owner for the design review (the five items on the PR template's "Owner design review" line). On approval: `gh pr merge --squash --delete-branch`.
 4. `git -C <root> switch main && git -C <root> pull --ff-only`.

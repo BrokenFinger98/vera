@@ -24,7 +24,8 @@ Effective Kotlin defaults: `val` over `var`, no `!!` in production code, `data c
 <module>/internal/      adapters: jOOQ repositories, web controllers, Kafka consumers, caches. `internal` visibility
 ```
 
-Dependency direction: `internal → application → domain`. Other modules see only the module root package.
+Dependency direction: `internal → application → domain`. Other modules see only the module root package
+and named interfaces (`@NamedInterface`; today `metadata.domain`).
 
 ## Naming
 

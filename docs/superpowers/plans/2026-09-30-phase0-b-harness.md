@@ -221,7 +221,8 @@ Effective Kotlin defaults: `val` over `var`, no `!!` in production code, `data c
 <module>/internal/      adapters: jOOQ repositories, web controllers, Kafka consumers, caches. `internal` visibility
 ```
 
-Dependency direction: `internal → application → domain`. Other modules see only the module root package.
+Dependency direction: `internal → application → domain`. Other modules see only the module root package
+and named interfaces (`@NamedInterface`; today `metadata.domain`).
 
 ## Naming
 
@@ -311,8 +312,9 @@ Words used in code, tickets and ADRs. If a word is missing, add it in the same P
 ```
 
 Arrows point from the module that depends to the module it depends on. `allowedDependencies` in each
-`package-info.java` mirrors this map; `ModularityTest` fails when they diverge. The control plane
-(instance provisioning) is a separate deployable and is out of scope until Phase 5.
+`package-info.java` mirrors this map, and both change in the same PR. `ModularityTest` fails when code
+crosses a boundary that `allowedDependencies` does not allow; it does not compare this document.
+The control plane (instance provisioning) is a separate deployable and is out of scope until Phase 5.
 ```
 
 `docs/specs/README.md`:
@@ -850,7 +852,7 @@ disable-model-invocation: true
 ## Create and merge
 1. `gh pr create --fill-first --body-file <tmp> [--label test-change]`
 2. `gh pr checks --watch` until all required checks pass; if `claude-review` requests changes, address blocking items, push, re-watch.
-3. Ask the owner for the design review (five items in CLAUDE.md §Role). On approval: `gh pr merge --squash --delete-branch`.
+3. Ask the owner for the design review (the five items on the PR template's "Owner design review" line). On approval: `gh pr merge --squash --delete-branch`.
 4. `git -C <root> switch main && git -C <root> pull --ff-only`.
 ```
 
