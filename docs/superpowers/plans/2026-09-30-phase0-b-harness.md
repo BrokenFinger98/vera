@@ -109,7 +109,7 @@ the branch; decisions get an ADR (the push gate checks `docs/llm-wiki/` changed,
 ## Development flow (mandatory)
 
 ```
-/issue → <type>/<n>-<slug> branch (worktree) → /start-task → work → /commit → /finish-task → /pull-request → squash merge
+/ticket → <type>/<n>-<slug> branch (worktree) → /start-task → work → /gated-commit → /finish-task → /pull-request → squash merge
 ```
 
 Explore → Plan → Implement → Verify. Skip the plan only when the diff fits one sentence.
