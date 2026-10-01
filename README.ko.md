@@ -17,7 +17,7 @@ Phase 0 — 저장소·툴체인·하네스 구축 단계. `.harness/state/progr
 
 ## 빌드
 
-JDK 25(컴파일·테스트 툴체인), JDK 21(Gradle 데몬 — detekt 1.23이 25에서 실행되지 않음), Docker(통합 테스트)가 필요합니다.
+JDK 25와 Docker(통합 테스트)가 필요합니다.
 
 ```bash
 ./scripts/check.sh   # 포맷 검사, detekt, 유닛 테스트, 아키텍처 테스트

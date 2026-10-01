@@ -21,9 +21,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: |
-            21
-            25
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - run: ./scripts/check.sh
 
@@ -36,9 +34,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: |
-            21
-            25
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - run: ./scripts/itest.sh
         env:
@@ -53,9 +49,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: |
-            21
-            25
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       # koverVerify is detached from `check` (Task 3 review C1); it pulls every test task including itest,
       # so this job needs Docker (present on ubuntu-latest) and runs integration coverage too.
@@ -81,8 +75,6 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: |
-            21
-            25
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - run: ./scripts/build.sh

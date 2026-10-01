@@ -4,9 +4,9 @@
 
 **Goal:** Turn the empty `vera` directory into a building, testing, CI-green Kotlin/Spring Boot 4.1 modular monolith skeleton with the quality toolchain and the four Phase 0 proofs of concept, ready for the harness plan (Phase 0-B) and the first metadata-engine ticket.
 
-**Architecture:** One Gradle multi-project (`platform/*`, `apps/itam`, `ingestion`, `bootstrap`) sharing root package `com.brokenfinger.vera`; Spring Modulith treats each direct sub-package as a module and `verify()` enforces boundaries. Three test suites per module (`test`, `itest` with Testcontainers PostgreSQL 18, `archTest` with ArchUnit). Formatting and linting are deterministic (ktfmt via Spotless, detekt with the five core principles encoded, `maxIssues=0`). `scripts/*.sh` are the only entry points agents use.
+**Architecture:** One Gradle multi-project (`platform/*`, `apps/itam`, `ingestion`, `bootstrap`) sharing root package `com.brokenfinger.vera`; Spring Modulith treats each direct sub-package as a module and `verify()` enforces boundaries. Three test suites per module (`test`, `itest` with Testcontainers PostgreSQL 18, `archTest` with ArchUnit). Formatting and linting are deterministic (ktfmt via Spotless, detekt with the five core principles encoded, any finding fails the build). `scripts/*.sh` are the only entry points agents use.
 
-**Tech Stack (verified on Maven Central / services.gradle.org, 2026-09-30):** Java 25 (Temurin, installed), Gradle 9.7.1, Kotlin 2.3.21 (Boot 4.1.1 BOM-managed), Spring Boot 4.1.1 (Framework 7.0.9), Spring Modulith 2.1.1, jOOQ 3.21.7 (BOM), Flyway 12.4.0 (BOM) + `flyway-database-postgresql`, PostgreSQL 18 (`postgres:18-alpine`), Testcontainers 2.0.5 (`testcontainers-postgresql`, `testcontainers-junit-jupiter`), JUnit 6.0.3 + AssertJ 3.27.7 (BOM), GraalVM Polyglot 25.4.4.1.1 (`polyglot`, `js-community`), Spotless 8.10.3 + ktfmt, detekt 1.23.8, ArchUnit 1.5.1, Kover 0.9.11, springdoc 3.1.1 (added later, not in this plan), Gradle daemon on JDK 21 (detekt 1.23 cannot run on 25).
+**Tech Stack (verified on Maven Central / services.gradle.org, 2026-09-30):** Java 25 (Temurin, installed), Gradle 9.7.1, Kotlin 2.3.21 (Boot 4.1.1 BOM-managed), Spring Boot 4.1.1 (Framework 7.0.9), Spring Modulith 2.1.1, jOOQ 3.21.7 (BOM), Flyway 12.4.0 (BOM) + `flyway-database-postgresql`, PostgreSQL 18 (`postgres:18-alpine`), Testcontainers 2.0.5 (`testcontainers-postgresql`, `testcontainers-junit-jupiter`), JUnit 6.0.3 + AssertJ 3.27.7 (BOM), GraalVM Polyglot 25.4.4.1.1 (`polyglot`, `js-community`), Spotless 8.10.3 + ktfmt, detekt 2.0.0-alpha.6 (since 2026-10-01, see the Task 3 decision; 1.23.8 before), ArchUnit 1.5.1, Kover 0.9.11, springdoc 3.1.1 (added later, not in this plan), Gradle daemon pinned to JDK 25.
 
 **Spec:** `docs/superpowers/specs/2026-09-30-vera-dev-environment-design.md` §4, §8, §11, §12 steps 2–3 and 6.
 
@@ -22,13 +22,13 @@ vera/
 ├── gradle/wrapper/{gradle-wrapper.jar,gradle-wrapper.properties}  gradlew  gradlew.bat
 ├── gradle/libs.versions.toml           # single source of versions
 ├── gradle.properties                   # configuration cache, build cache, parallel, JVM args
-├── gradle/gradle-daemon-jvm.properties # daemon JVM 21 (detekt 1.23); compile/test on the 25 toolchain
+├── gradle/gradle-daemon-jvm.properties # daemon pinned to JDK 25, whatever JAVA_HOME launches Gradle
 ├── settings.gradle.kts                 # project names and paths
 ├── build.gradle.kts                    # shared conventions for all subprojects (Kotlin, Boot BOM, test suites, detekt, spotless, kover)
 ├── config/detekt/detekt.yml            # five core principles as rules
 ├── platform/metadata/  platform/query/  platform/rule/  platform/layering/
 ├── apps/itam/  ingestion/  bootstrap/   # each: build.gradle.kts + src/{main,test,itest,archTest}
-├── scripts/{check,test,itest,build}.sh  # agent entry points
+├── scripts/{check,test,itest,build}.sh  # agent entry points; scripts/detekt-calibrate.sh runs on detekt bumps
 ├── compose.yml                          # human demo stack; PG default, others under profile "full"
 └── .github/workflows/ci.yml             # build · test · archTest · itest · kover
 ```
@@ -177,7 +177,7 @@ Phase 0 — repository, toolchain and harness. See `.harness/state/progress.md`.
 
 ## Build
 
-Requires JDK 25 (compile/test toolchain), JDK 21 (Gradle daemon — detekt 1.23 cannot run on 25) and Docker (integration tests).
+Requires JDK 25 and Docker (integration tests).
 
 ```bash
 ./scripts/check.sh   # format check, detekt, unit tests, architecture tests
@@ -220,7 +220,7 @@ Phase 0 — 저장소·툴체인·하네스 구축 단계. `.harness/state/progr
 
 ## 빌드
 
-JDK 25(컴파일·테스트 툴체인), JDK 21(Gradle 데몬 — detekt 1.23이 25에서 실행되지 않음), Docker(통합 테스트)가 필요합니다.
+JDK 25와 Docker(통합 테스트)가 필요합니다.
 
 ```bash
 ./scripts/check.sh   # 포맷 검사, detekt, 유닛 테스트, 아키텍처 테스트
@@ -305,6 +305,7 @@ git commit -m "build: add Gradle 9.7.1 wrapper"
 - Replace: `settings.gradle.kts` (the one-line placeholder Task 2 left behind)
 - Modify: `gradle/wrapper/gradle-wrapper.properties` — adds `distributionSha256Sum`, see Task 2 Step 3b
 - Create: an empty tracked `.gitkeep` in every directory named by `include(...)`. Gradle 9.7.1 refuses to configure a project whose directory does not exist, and Task 4 replaces these placeholders with real sources.
+- Create (2026-10-01, Steps 6b–6c): `gradle/gradle-daemon-jvm.properties`, `scripts/detekt-calibrate.sh` and the disabled calibration fixtures under `platform/metadata/src/main/kotlin/com/brokenfinger/vera/metadata/poc/calibration/`
 
 - [ ] **Step 1: Write `gradle/libs.versions.toml`**
 
@@ -315,7 +316,7 @@ spring-boot = "4.1.1"
 spring-modulith = "2.1.1"
 graalvm-polyglot = "25.4.4.1.1"
 archunit = "1.5.1"
-detekt = "1.23.8"
+detekt = "2.0.0-alpha.6"     # alpha, pinned exactly (Plan A Task 3); after any bump run scripts/detekt-calibrate.sh
 spotless = "8.10.3"
 kover = "0.9.11"
 
@@ -351,7 +352,7 @@ archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
 kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
 ```
@@ -368,11 +369,12 @@ kotlin.code.style=official
 kotlin.daemon.jvmargs=-Xmx2g
 # GraalJS on a stock JDK runs the interpreter only; silence the warning in tests (spec D6).
 systemProp.polyglot.engine.WarnInterpreterOnly=false
-# detekt 1.23 bundles Kotlin 2.0.21, whose JavaVersion parser rejects JDK 25, so the daemon runs on
-# JDK 21 (gradle/gradle-daemon-jvm.properties) while compilation and tests use the 25 toolchain.
-org.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64,JAVA_HOME_21_ARM64,JAVA_HOME_25_ARM64
-# Without this a machine that has no JDK 21 fails with "download from 'null'"; with it Gradle
-# says plainly that no matching Java 21 installation was found.
+# gradle/gradle-daemon-jvm.properties pins the daemon to JDK 25 whatever JDK launches Gradle
+# (JAVA_HOME), so local and CI daemons agree; compilation and tests use the Java 25 toolchain.
+# Both find JDK 25 by auto-detection or through these variables, which actions/setup-java exports.
+org.gradle.java.installations.fromEnv=JAVA_HOME_25_X64,JAVA_HOME_25_ARM64
+# Without this a machine with no JDK 25 fails with "Unable to download toolchain ... from 'null'";
+# with it Gradle says plainly that it cannot find a Java installation matching languageVersion=25.
 org.gradle.java.installations.auto-download=false
 ```
 
@@ -408,7 +410,9 @@ include(
 - [ ] **Step 4: Write `build.gradle.kts` (root)**
 
 ```kotlin
-import io.gitlab.arturbosch.detekt.Detekt
+import dev.detekt.gradle.Detekt
+import dev.detekt.gradle.extensions.DetektExtension
+import dev.detekt.gradle.extensions.FailOnSeverity
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -450,7 +454,7 @@ configure(codeProjects) {
     apply(plugin = "org.jetbrains.kotlin.jvm")
     apply(plugin = "org.jetbrains.kotlin.plugin.spring")
     apply(plugin = "java-library")
-    apply(plugin = "io.gitlab.arturbosch.detekt")
+    apply(plugin = "dev.detekt")
     apply(plugin = "org.jetbrains.kotlinx.kover")
 
     extensions.configure<JavaPluginExtension> {
@@ -534,27 +538,34 @@ configure(codeProjects) {
     }
 
     // ---------- detekt: the five core principles as machine rules ----------
-    extensions.configure<io.gitlab.arturbosch.detekt.extensions.DetektExtension> {
-        buildUponDefaultConfig = true
-        allRules = false
+    // One type-resolved task per source set. Each takes its classpath, language version and
+    // jvmTarget (25) from the Kotlin compile task of the same source set.
+    val detektSourceSetTasks = listOf("detektMain", "detektTest", "detektItest", "detektArchTest")
+    extensions.configure<DetektExtension> {
+        buildUponDefaultConfig.set(true)
+        allRules.set(false)
         config.setFrom(rootProject.files("config/detekt/detekt.yml"))
-        baseline = null // baselines are forbidden: they hide debt from the gates
-        source.setFrom(
-            "src/main/kotlin",
-            "src/test/kotlin",
-            "src/itest/kotlin",
-            "src/archTest/kotlin",
-        )
+        // Any finding fails the build, whatever severity a rule is given (1.23: maxIssues: 0).
+        failOnSeverity.set(FailOnSeverity.Info)
+        // Baselines are forbidden: they hide debt from the gates. Without this line the plugin
+        // silently applies any detekt-baseline.xml that appears in a module.
+        baseline.convention(null as RegularFile?)
+        // The plain `detekt` task cannot resolve types, so it analyses nothing itself and only
+        // runs the source-set tasks.
+        source.setFrom()
     }
+    tasks.named("detekt") { dependsOn(detektSourceSetTasks) }
     tasks.withType<Detekt>().configureEach {
-        // detekt 1.23.x embeds a Kotlin 2.0 compiler; 21 is its highest known JVM target.
-        jvmTarget = "21"
         reports {
-            md.required.set(true)
-            xml.required.set(true)
+            markdown.required.set(true)
+            checkstyle.required.set(true)
             html.required.set(false)
             sarif.required.set(false)
         }
+        // Tamper evidence: a module override that weakens the gate fails before any analysis.
+        doFirst(
+            DetektGateGuard(path, baseline, ignoreFailures, failOnSeverity, disableDefaultRuleSets)
+        )
     }
 
     // Coverage is aggregated at the root, so the per-module koverVerify must stay off `check`.
@@ -563,11 +574,9 @@ configure(codeProjects) {
         reports { total { verify { onCheck.set(false) } } }
     }
 
-    // `check` = everything the Stop hook and CI run for a module. detektMain adds type resolution
-    // for declared nullability only (parameters, declared locals, same-file returns); `!!` on
-    // inferred types is missed because detekt 1.23's Kotlin 2.0.21 compiler cannot read Kotlin 2.3
-    // stdlib metadata. Full resolution awaits detekt 2.x GA.
-    tasks.named("check") { dependsOn("detektMain", "archTest") }
+    // `check` = everything the Stop hook and CI run for a module. detektItest compiles and analyses
+    // the itest sources without running them, so `check` still needs no Docker.
+    tasks.named("check") { dependsOn(detektSourceSetTasks + "archTest") }
 }
 
 // ---------- Aggregated coverage across all modules ----------
@@ -615,6 +624,39 @@ class SuiteSummaryListener(private val taskPath: String) : TestListener {
         )
     }
 }
+
+/**
+ * Fails a detekt task before it analyses anything when a module has weakened the gate: a baseline
+ * that would hide findings, `ignoreFailures`, a `failOnSeverity` other than Info, or disabled
+ * default rule sets. It holds only the task path and providers, so it stays configuration-cache
+ * serialisable.
+ */
+class DetektGateGuard(
+    private val taskPath: String,
+    private val baseline: Provider<RegularFile>,
+    private val ignoreFailures: Provider<Boolean>,
+    private val failOnSeverity: Provider<FailOnSeverity>,
+    private val disableDefaultRuleSets: Provider<Boolean>,
+) : Action<Task> {
+    override fun execute(task: Task) {
+        check(!baseline.isPresent) {
+            "$taskPath: detekt baselines are forbidden, they hide debt from the gates. Remove the " +
+                "baseline setting, delete ${baseline.get().asFile} and fix the findings."
+        }
+        check(!ignoreFailures.get()) {
+            "$taskPath: detekt ignoreFailures must stay false, or findings stop failing the build. " +
+                "Remove the override and fix the findings."
+        }
+        check(failOnSeverity.orNull == FailOnSeverity.Info) {
+            "$taskPath: detekt failOnSeverity must stay Info so any finding fails the build, not " +
+                "${failOnSeverity.orNull}. Remove the override and fix the findings."
+        }
+        check(!disableDefaultRuleSets.get()) {
+            "$taskPath: detekt default rule sets must stay enabled; " +
+                "remove the override and fix the findings."
+        }
+    }
+}
 ```
 
 - [ ] **Step 5: Write `config/detekt/detekt.yml`**
@@ -624,22 +666,20 @@ class SuiteSummaryListener(private val taskPath: String) : TestListener {
 # 1 one method = one job (≤10 lines)   2 no else / early return   3 wrap primitives
 # 4 behaviour over getters             5 composition over inheritance
 # Rules that cannot be expressed here are covered by ArchUnit (archTest) or review.
-build:
-  maxIssues: 0
-  weights:
-    complexity: 2
-    style: 1
+# Every finding fails the build (failOnSeverity = Info in build.gradle.kts; 1.23 had maxIssues: 0).
+# detekt 2.x limits name the largest allowed value, where 1.23 named the first failing one. Each
+# limit below keeps the 1.23 pass/fail boundary, measured with probe functions on both versions.
 
 config:
   validation: true
-  warningsAsErrors: true
+  warningsAsErrors: true     # a deprecated key fails validation instead of warning
 
 complexity:
   active: true
   LongMethod:
     active: true
     # principle 1: a function declaration longer than 10 lines (signature to closing brace) is a smell
-    threshold: 11
+    allowedLines: 10
     ignoreAnnotated:
       - 'Test'
       - 'ParameterizedTest'
@@ -652,28 +692,29 @@ complexity:
       - 'Bean'
   LongParameterList:
     active: true
-    functionThreshold: 5
-    constructorThreshold: 6
+    allowedFunctionParameters: 4
+    allowedConstructorParameters: 5
     ignoreDefaultParameters: true
   NestedBlockDepth:
     active: true
-    threshold: 3             # principle 2: early return instead of nesting
+    allowedDepth: 2          # principle 2: early return instead of nesting
   TooManyFunctions:
     active: true
     # detekt's inherited test excludes only know src/test; the custom suites need naming too.
     excludes: &testSuites ['**/test/**', '**/itest/**', '**/archTest/**', '**/*.kts']
-    thresholdInClasses: 12
-    thresholdInInterfaces: 12
-    thresholdInObjects: 12
-    thresholdInFiles: 20
+    allowedFunctionsPerClass: 11
+    allowedFunctionsPerInterface: 11
+    allowedFunctionsPerObject: 11
+    allowedFunctionsPerFile: 19
+    allowedFunctionsPerEnum: 10   # 1.23's inherited limit; the 2.x default would allow 11
     ignoreDeprecated: true
     ignorePrivate: true
   CyclomaticComplexMethod:
     active: true
-    threshold: 8
+    allowedComplexity: 7
   LargeClass:
     active: true
-    threshold: 300
+    allowedLines: 299
 
 style:
   active: true
@@ -695,8 +736,9 @@ style:
     ignoreNumbers: ['-1', '0', '1', '2']
     ignoreAnnotation: true
     ignorePropertyDeclaration: true
+    ignoreLocalVariableDeclaration: false   # 1.23's default; 2.x would let `val x = 42` through
     ignoreCompanionObjectPropertyDeclaration: true
-  UnusedPrivateMember:
+  UnusedPrivateFunction:     # 1.23: UnusedPrivateMember
     active: true
   UseDataClass:
     active: true
@@ -707,8 +749,11 @@ style:
     active: true
     max: 3
     excludeGuardClauses: true   # principle 2: leading `if (...) throw` guards are the house style
-  UnnecessaryAbstractClass:
-    active: true             # principle 5: composition over inheritance
+  # principle 5: composition over inheritance. These two were 1.23's UnnecessaryAbstractClass.
+  AbstractClassCanBeConcreteClass:
+    active: true
+  AbstractClassCanBeInterface:
+    active: true
   UnnecessaryInheritance:
     active: true
 
@@ -727,11 +772,12 @@ exceptions:
 
 potential-bugs:
   active: true
-  # type resolution via detektMain — declared nullability only; inferred nulls are not caught until detekt 2.x
+  # Team rule: no `!!` in production code; tests may use it. Type resolution also catches `!!` on
+  # inferred nullability such as `items.firstOrNull()!!` — production sources only.
   UnsafeCallOnNullableType:
     active: true
-  # type resolution via detektMain — declared nullability only; inferred nulls are not caught until detekt 2.x
-  ImplicitDefaultLocale:
+    excludes: *testSuites
+  ImplicitDefaultLocale:     # type resolution, every source set
     active: true
 
 naming:
@@ -747,9 +793,9 @@ performance:
   SpreadOperator:
     active: false            # forwarding vararg needs *; one startup copy is not a cost (same shape as ReturnCount)
 
-# No `formatting:` section here on purpose. ktfmt via Spotless owns formatting, so the
-# detekt-formatting ruleset is not on the detekt classpath, and its config keys would then fail
-# `config.validation` as unknown properties.
+# No `ktlint:` section here on purpose. ktfmt via Spotless owns formatting, so detekt's ktlint
+# wrapper (detekt-rules-ktlint-wrapper, 1.23: detekt-formatting) is not on the detekt classpath, and
+# its config keys would then fail `config.validation` as unknown properties.
 
 coroutines:
   active: true
@@ -764,43 +810,116 @@ Run each of these from the repository root with `JAVA_HOME=/Library/Java/JavaVir
 ./gradlew spotlessCheck --console=plain -q; echo exit=$?
 ./gradlew :bootstrap:tasks --group=verification --console=plain -q
 ```
-Expected: the Gradle help banner then `exit=0`; `spotlessCheck` silent with `exit=0` (if it fails, run `spotlessApply` and inspect the diff); the task list containing `detekt`, `test`, `itest`, `archTest` and `koverVerify`. If plugin resolution fails, the error names the plugin id and version — fix the catalog, do not change versions elsewhere.
+Expected: the Gradle help banner then `exit=0`; `spotlessCheck` silent with `exit=0` (if it fails, run `spotlessApply` and inspect the diff); the task list containing `detekt`, `detektMain`, `detektTest`, `detektItest`, `detektArchTest`, `test`, `itest`, `archTest` and `koverVerify`. If plugin resolution fails, the error names the plugin id and version — fix the catalog, do not change versions elsewhere.
 
-Decision (2026-09-30): detekt 1.23.8 bundles Kotlin 2.0.21, whose shaded IntelliJ `JavaVersion` parser rejects any feature version above 24, so on a Java 25 daemon the task dies with `> 25.0.3` before analysis starts. detekt 2.0 exists only as `dev.detekt:detekt-gradle-plugin:2.0.0-alpha.6`, and an alpha is not an acceptable gate. Konsist 0.17.3 depends on the same `kotlin-compiler-embeddable:2.0.21` and would crash the same way inside a Java 25 `archTest` JVM. Therefore the Gradle daemon runs on JDK 21 via `gradle/gradle-daemon-jvm.properties`, with `org.gradle.java.installations.fromEnv` so CI finds both JDKs; compilation and tests keep the Java 25 toolchain; and Konsist is replaced by ArchUnit 1.5.1, which embeds no compiler and is what Spring Modulith uses internally. detekt 1.23.8 also blocks the Gradle 10 upgrade (it calls `ReportingExtension.file(String)`, removed in Gradle 10); both constraints lift together with detekt 2.x GA. detektMain's type resolution is partial for the same reason (declared nullability only). See Step 6b.
+Decision (2026-10-01): detekt 2.0.0-alpha.6 replaces 1.23.8, and the Gradle daemon runs on JDK 25 again. detekt 1.23 has had no release since 2025-02 and cannot run on JDK 25: 1.23.8 bundles Kotlin 2.0.21, whose shaded IntelliJ `JavaVersion` parser rejects any feature version above 24, so on a Java 25 daemon the task died with `> 25.0.3` before analysis started. The 2026-09-30 decision therefore pinned the daemon to JDK 21 through `gradle/gradle-daemon-jvm.properties`; the same file now pins it to 25 by daemon-JVM criteria (Step 6b), so local and CI daemons agree whatever `JAVA_HOME` launches Gradle. 2.0.0-alpha.6 (2026-08-04) is built on Kotlin 2.4.10 and tested against JDK 25; its classpath needed no Kotlin pin. It is an alpha, so the catalog pins it exactly; it is a development tool that never ships in `vera.jar`; reverting it is one PR (catalog, root build script, `detekt.yml`, `check.sh`, `ci.yml`, daemon criteria). Type resolution is now full: every source set has its own type-resolved task (`detektMain`, `detektTest`, `detektItest`, `detektArchTest`), all four on `check`, and each takes classpath and `jvmTarget` 25 from its Kotlin compile task. A throwaway `fun firstLength(items: List<String>): Int = items.firstOrNull()!!.length` in `bootstrap` main passed `:bootstrap:detektMain` with `exit=0` on 1.23.8 (its compiler could not read Kotlin 2.3 stdlib metadata) and fails it on 2.0.0-alpha.6 with `exit=1`: `FirstLength.kt:3:45 Calling !! on a nullable type will throw a NullPointerException at runtime in case the value is null. It should be avoided. [UnsafeCallOnNullableType]`. `config.validation` rejected 13 properties of the 1.23 file (the `build` section, ten threshold keys, `UnusedPrivateMember`, `UnnecessaryAbstractClass`); Step 5 is the migrated file. Any finding fails the build through `failOnSeverity = Info` (2.x has no `maxIssues`): with `MagicNumber` set to `severity: warning` and `ForbiddenComment` to `info`, a probe holding one of each still fails with `exit=1`, and with the plugin default (`Error`) it would pass. The plugin's `detekt-baseline.xml` convention is cleared: a generated `detekt-baseline-main.xml` suppresses its finding without that line and is ignored with it. `UnsafeCallOnNullableType` excludes the test suites, because the team rule is "no `!!` in production code" and tests may use it: a `!!` probe fails `detektMain` and passes `detektTest`, `detektItest` and `detektArchTest` (before, the inherited default exempted `src/test` alone). The gate is tamper-evident: `DetektGateGuard`, a `doFirst` action on every detekt task, fails before any analysis when a module sets a baseline, `ignoreFailures`, a `failOnSeverity` other than Info, or `disableDefaultRuleSets`. Each override, tried in `platform/metadata`, fails `detektMain` with its own message, e.g. `detekt failOnSeverity must stay Info so any finding fails the build, not Error. Remove the override and fix the findings.` A module script can still switch a task off without touching those settings (`actions.clear()`, which drops the guard too, `enabled = false` or `setSource(files())` each exit 0), so Plan B's pre-push guard check 9 rejects any added `detekt` line in a `*.gradle.kts` other than the root one, and CODEOWNERS puts every build script in front of the owner. ArchUnit stays in place of Konsist (Task 6): Konsist 0.17.3 still depends on `kotlin-compiler-embeddable:2.0.21`. The Gradle 10 blocker left with 1.23 as well: 1.23.8 called `ReportingExtension.file(String)`, which Gradle 10 removes, and 2.0 uses `ReportingExtension.baseDirectory`.
 
-- [ ] **Step 6b: Put the daemon on JDK 21**
+2.x limits name the largest allowed value, where 1.23 named the first failing one (`lines >= threshold` became `lines > allowedLines`), so every limit in Step 5 was calibrated by measurement: one throwaway probe just inside and one just outside each limit, run with 1.23.8 and the old file (`:platform:metadata:detekt`) and with 2.0.0-alpha.6 and Step 5 (`:platform:metadata:detektMain`). Both versions gave the same result for every probe: the inside set `exit=0` with no findings, the outside set `exit=1` with exactly one finding per probe, all from the target rule.
 
-`./gradlew updateDaemonJvm --jvm-version=21` fails on Gradle 9.7.1 with "Toolchain download repositories have not been configured", so write `gradle/gradle-daemon-jvm.properties` by hand with exactly:
+| Rule | 1.23 key | 2.x key | Passes on both | Fails on both |
+|---|---|---|---|---|
+| `LongMethod` | `threshold: 11` | `allowedLines: 10` | 10 lines | 11 lines |
+| `NestedBlockDepth` | `threshold: 3` | `allowedDepth: 2` | depth 2 | depth 3 |
+| `LongParameterList`, functions | `functionThreshold: 5` | `allowedFunctionParameters: 4` | 4 | 5 |
+| `LongParameterList`, constructors | `constructorThreshold: 6` | `allowedConstructorParameters: 5` | 5 | 6 |
+| `CyclomaticComplexMethod` | `threshold: 8` | `allowedComplexity: 7` | 7 | 8 |
+| `LargeClass` | `threshold: 300` | `allowedLines: 299` | 299 lines | 300 lines |
+| `TooManyFunctions`, class / interface / object | `thresholdIn*: 12` | `allowedFunctionsPer*: 11` | 11 | 12 |
+| `TooManyFunctions`, file | `thresholdInFiles: 20` | `allowedFunctionsPerFile: 19` | 19 | 20 |
+| `TooManyFunctions`, enum | inherited `11` | `allowedFunctionsPerEnum: 10` | 10 | 11 |
+
+Two 2.x default changes are pinned back to 1.23 behaviour: the enum limit above (2.x inherits `11` with the new meaning) and `MagicNumber.ignoreLocalVariableDeclaration: false` (2.x defaults to `true`). One difference cannot be calibrated away, measured with probes: 1.23 skipped KDoc entirely, 2.0.0-alpha.6 counts some of it. `LongMethod` counts only the function body, so KDoc above a function is not counted (an 11-line function with a three-line KDoc above it measures 11); KDoc written inside the body adds its `/**` and `*/` lines, +2 (the same function measures 13) or +1 for a one-line KDoc (12). `LargeClass` counts member KDoc, +2 each (+1 one-line), and the class's own KDoc, +2. `//` and `/* */` comments are never counted. 2.0 has no option to exclude KDoc: `LongMethod` and `LargeClass` accept only `allowedLines`. Current code impact: 0 — the extra lines can only add findings, and every source set reports none. One detection is new: `AbstractClassCanBeInterface` also checks sealed classes (`ignoreSealedClasses: false`, kept). A throwaway `sealed class ProbeOutcome` with two `data object` subclasses fires it (`A sealed class without a concrete member can be refactored to a sealed interface.`); the repository's one sealed hierarchy, `ScriptException`, does not, because it extends `IllegalStateException`, which an interface cannot, and takes constructor parameters.
+
+- [ ] **Step 6b: Pin the daemon to JDK 25**
+
+Without a pin the daemon runs on whatever JDK launches Gradle, and this Mac's shell exports a JDK 21 `JAVA_HOME` while CI runs 25. `./gradlew updateDaemonJvm --jvm-version=25` fails on Gradle 9.7.1 with "Toolchain download repositories have not been configured", so write `gradle/gradle-daemon-jvm.properties` by hand with exactly:
 
 ```properties
-#This file is generated by updateDaemonJvm
-toolchainVersion=21
+toolchainVersion=25
 ```
 
-Append to `gradle.properties`, naming the variables `actions/setup-java` exports on both x64 and arm64 runners and switching auto-provisioning off so a machine without JDK 21 gets a clear message instead of a download attempt:
-
-```properties
-# detekt 1.23 bundles Kotlin 2.0.21, whose JavaVersion parser rejects JDK 25, so the daemon runs on
-# JDK 21 (gradle/gradle-daemon-jvm.properties) while compilation and tests use the 25 toolchain.
-org.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64,JAVA_HOME_21_ARM64,JAVA_HOME_25_ARM64
-# Without this a machine that has no JDK 21 fails with "download from 'null'"; with it Gradle
-# says plainly that no matching Java 21 installation was found.
-org.gradle.java.installations.auto-download=false
-```
-
-Verify, keeping `JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home` as the launcher:
+Verify from the JDK 21 launcher:
 
 ```bash
-./gradlew --version
-./gradlew help -q; echo exit=$?
-mkdir -p bootstrap/src/main/kotlin/com/brokenfinger/vera
-printf 'package com.brokenfinger.vera\n\nobject Tmp { const val X: Int = 1 }\n' > bootstrap/src/main/kotlin/com/brokenfinger/vera/Tmp.kt
-./gradlew :bootstrap:detekt -q; echo exit=$?
-./gradlew :bootstrap:compileKotlin -q
-javap -v bootstrap/build/classes/kotlin/main/com/brokenfinger/vera/Tmp.class | grep 'major version'
-rm bootstrap/src/main/kotlin/com/brokenfinger/vera/Tmp.kt && ./gradlew clean -q
+JAVA_HOME=/Users/yu-sun00/Library/Java/JavaVirtualMachines/liberica-21.0.6 ./gradlew --version
+JAVA_HOME=/Users/yu-sun00/Library/Java/JavaVirtualMachines/liberica-21.0.6 ./scripts/check.sh; echo exit=$?
 ```
-Expected: `Launcher JVM: 25.0.3` with `Daemon JVM: Compatible with Java 21, any vendor, nativeImageCapable=false (from gradle/gradle-daemon-jvm.properties)`; `exit=0` from `help`; `exit=0` from `:bootstrap:detekt`, which is the proof detekt now executes; and `major version: 69`, which is Java 25 bytecode from the toolchain. Delete the throwaway file and leave the tree clean. Committed separately as `build: run the Gradle daemon on JDK 21 so detekt 1.23 executes; compile and test on 25`.
+Result (executed 2026-10-01): `Launcher JVM:  21.0.6 (BellSoft 21.0.6+10-LTS)` with `Daemon JVM:    Compatible with Java 25, any vendor, nativeImageCapable=false (from gradle/gradle-daemon-jvm.properties)`, the same `Daemon JVM` line from a Temurin 25 launcher, and `check.sh` `exit=0` from both. An init script printing `java.home` inside the build showed a cold daemon on `/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home` from either launcher, the only JDK 25 that `javaToolchains` detects. "Any vendor" also lets Gradle reuse an idle Java 25 daemon of another vendor: once it picked one that kotlin-lsp had started on its bundled JetBrains Runtime 25.0.4.1. Without `auto-download=false` a machine with no JDK 25 fails with `Unable to download toolchain ... from 'null'`; with it, Gradle says `Cannot find a Java installation on your machine ... matching: {languageVersion=25, ...}. Toolchain auto-provisioning is not enabled.` Committed separately as `build: pin the Gradle daemon to JDK 25 and drop stale Konsist references`.
+
+- [ ] **Step 6c: Keep the calibration probes**
+
+The probes behind the table above are committed as disabled fixtures under `platform/metadata/src/main/kotlin/com/brokenfinger/vera/metadata/poc/calibration/`: `inside/` (ten files, no findings) and `outside/` (ten files, eleven findings). `scripts/detekt-calibrate.sh` replays them. **Run `scripts/detekt-calibrate.sh` on every detekt version bump.** It is not part of `check.sh`, because the outside fixtures fail by design.
+
+`scripts/detekt-calibrate.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Re-measures the calibrated detekt limits; run it on every detekt version bump (Plan A Task 3).
+# Enables the fixtures under platform/metadata/.../poc/calibration (one probe just inside and one
+# just outside every limit), runs :platform:metadata:detektMain and compares the findings in its
+# markdown report with EXPECTED below. Not part of check.sh: the outside fixtures fail by design.
+# Callers: whoever bumps detekt.
+# Exit codes: 0 boundaries unchanged · 1 boundary drift or Gradle failure · 2 environment (not a repo, not bash, bad arguments).
+. "$(dirname "$0")/lib.sh"
+[ $# -eq 0 ] || { echo "detekt-calibrate.sh takes no arguments." >&2; exit 2; }
+
+CAL="$ROOT/platform/metadata/src/main/kotlin/com/brokenfinger/vera/metadata/poc/calibration"
+REPORT="$ROOT/platform/metadata/build/reports/detekt/main.md"
+LOG="$ROOT/build/detekt-calibrate.log"
+# Every finding the outside fixtures must produce, as "rule file"; the inside fixtures stay silent.
+EXPECTED="CyclomaticComplexMethod CyclomaticComplexMethodOutside.kt
+LargeClass LargeObjectOutside.kt
+LongMethod LongMethodOutside.kt
+LongParameterList LongParameterListOutside.kt
+LongParameterList LongParameterListOutside.kt
+NestedBlockDepth NestedBlockDepthOutside.kt
+TooManyFunctions TooManyClassOutside.kt
+TooManyFunctions TooManyEnumOutside.kt
+TooManyFunctions TooManyInterfaceOutside.kt
+TooManyFunctions TooManyObjectOutside.kt
+TooManyFunctions TooManyTopLevelOutside.kt"
+
+# Enabled fixtures would fail check.sh, so every exit path renames them back.
+disable_fixtures() {
+  local f
+  for f in "$CAL"/*/*.kt; do
+    [ -e "$f" ] && mv "$f" "$f.disabled"
+  done
+}
+trap disable_fixtures EXIT
+trap 'exit 130' INT TERM
+for f in "$CAL"/*/*.kt.disabled; do
+  [ -e "$f" ] && mv "$f" "${f%.disabled}"
+done
+
+start=$SECONDS
+rm -f "$REPORT"
+mkdir -p "$(dirname "$LOG")"
+# detektMain fails here by design; its report, not its exit code, is what gets compared.
+"$ROOT/gradlew" -p "$ROOT" --console=plain -q :platform:metadata:detektMain >"$LOG" 2>&1
+# No report means nothing was analysed: either detekt rejected the config, which detekt.yml must
+# fix, or Gradle failed earlier (e.g. a compile error), which says nothing about the limits.
+if [ ! -f "$REPORT" ]; then
+  echo "RESULT calibrate exit=1 seconds=$((SECONDS - start))"
+  grep -q 'invalid config propert' "$LOG" &&
+    { echo "detekt rejected config/detekt/detekt.yml — fix the key named in build/detekt-calibrate.log" >&2; exit 1; }
+  echo "Gradle failed before analysis — see build/detekt-calibrate.log; do not change detekt.yml" >&2
+  exit 1
+fi
+actual="$(awk '/^### /{rule=$3} /^\* (Error|Warning|Info): /{split($3, loc, ":"); n=split(loc[1], dirs, "/"); print rule, dirs[n]}' "$REPORT" | sort)"
+expected="$(printf '%s\n' "$EXPECTED" | sort)"
+code=0
+[ "$actual" = "$expected" ] || code=1
+echo "RESULT calibrate exit=${code} seconds=$((SECONDS - start))"
+if [ $code -ne 0 ]; then
+  echo "detekt-calibrate.sh: findings differ from the calibrated boundaries (< expected, > actual):" >&2
+  diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2
+  echo "Adjust config/detekt/detekt.yml until this passes; never edit the fixtures. Gradle output: build/detekt-calibrate.log" >&2
+fi
+exit $code
+```
+
+Result (executed 2026-10-01): `RESULT calibrate exit=0 seconds=1` (the report lists `## Issues (11)` over 22 Kotlin files). With `LongMethod.allowedLines` raised to 11: `RESULT calibrate exit=1` and the diff `< LongMethod LongMethodOutside.kt`. A SIGTERM while Gradle ran, with 17 of the 20 fixtures enabled, exited 130 and left all 20 `.disabled`. A throwaway fixture copy with a syntax error stops Gradle before analysis, and the script then prints only `Gradle failed before analysis — see build/detekt-calibrate.log; do not change detekt.yml` with `RESULT calibrate exit=1`; the log names `SyntaxErrorCopy.kt:14:17 Syntax error: Expecting '}'.` When detekt rejects the config itself, an unknown `LongMethod.threshold` key for instance, the script prints `detekt rejected config/detekt/detekt.yml — fix the key named in build/detekt-calibrate.log` instead, and the log names `Property 'complexity>LongMethod>threshold' is misspelled or does not exist`.
 
 - [ ] **Step 7: Commit**
 
@@ -1142,7 +1261,7 @@ Expected: a line `:platform:metadata:test: 16 tests, 0 failed, 0 skipped` (5 acc
 Run: `./gradlew detekt detektMain test archTest --console=plain -q; echo exit=$?` (archTest has no tests yet; it must still configure and pass — every module reports `NO-SOURCE`).
 Expected: `exit=0`. Both detekt findings below fired on the first draft of `TableName.of`, which had five inline guard-clause throws; the code above is the settled version.
 - `ThrowsCount` (max 3) flagged the guard-clause throws. The fix is configuration, not code: `style.ThrowsCount.excludeGuardClauses: true` in `config/detekt/detekt.yml`, because guard clauses are the early-return style principle 2 asks for. `max` stays 3 and `of` is not restructured into a lookup table.
-- `LongMethod` (threshold 11, reported at `>=`) flagged `of` at exactly 11 lines, because ktfmt wraps any guard longer than 100 columns over two lines. The threshold stays 11. Two changes keep `of` short: the throw moved into a private `reject(raw, reason): Nothing` helper, and the one long reason string became the `TOO_LONG_REASON` constant. Every guard then fits on one line and `of` is 7 lines long. `of` holds no `throw` at all now, so `excludeGuardClauses` above is policy for the next guard clause rather than a workaround for this one.
+- `LongMethod` (threshold 11, reported at `>=`) flagged `of` at exactly 11 lines, because ktfmt wraps any guard longer than 100 columns over two lines. The threshold stays 11 (on detekt 2.x the same boundary is `allowedLines: 10`, see the Task 3 decision). Two changes keep `of` short: the throw moved into a private `reject(raw, reason): Nothing` helper, and the one long reason string became the `TOO_LONG_REASON` constant. Every guard then fits on one line and `of` is 7 lines long. `of` holds no `throw` at all now, so `excludeGuardClauses` above is policy for the next guard clause rather than a workaround for this one.
 - Any other detekt finding: fix the code to satisfy the rule; report if a rule seems wrong instead of suppressing it.
 
 - [ ] **Step 8: Commit**
@@ -1795,9 +1914,10 @@ run_gradle() {
 # and the detekt/test cache entry stays warm (Task 3 quality review).
 run_gradle format spotlessCheck || { code=$?; echo "check.sh: formatting failed — run ./gradlew spotlessApply, then rerun." >&2; exit $code; }
 
-# detekt = every source set without type resolution; detektMain = production sources with type
-# resolution (UnsafeCallOnNullableType and ImplicitDefaultLocale only fire here). Both are on `check`.
-run_gradle check detekt detektMain test archTest
+# One detekt task per source set, all four with type resolution and all on `check`.
+# UnsafeCallOnNullableType (`!!`) checks production sources only; tests may use `!!`.
+# detektItest compiles the itest sources but does not run them, so no Docker.
+run_gradle check detektMain detektTest detektItest detektArchTest test archTest
 code=$?
 if [ $code -ne 0 ]; then
   echo "check.sh failed. detekt: build/reports/detekt/*.md · tests: build/test-results/<suite>/ (assertion printed above) · archTest: fix the code, not the rule." >&2
@@ -1854,8 +1974,11 @@ Observed (cold): `RESULT format exit=0 seconds=1`, `RESULT check exit=0 seconds=
 Observed (warm): `RESULT format exit=0 seconds=0`, `RESULT check exit=0 seconds=1`, `exit=0`.
 Both `<n>` readings are far under the 60 s target, so no progress.md risk entry is needed for the
 Stop hook (spec §6 row 1). The Gradle daemon was already warm from the Task 1–6 runs, so every task
-in the `check` graph was `UP-TO-DATE`; a genuinely cold daemon would run longer. The daemon is JDK 21
-(see Task 3 Step 6b); the launcher JVM is whatever `JAVA_HOME` in `lib.sh` points at.
+in the `check` graph was `UP-TO-DATE`; a genuinely cold daemon would run longer. The daemon then ran
+on JDK 21 (the 2026-09-30 pin); since 2026-10-01 `gradle/gradle-daemon-jvm.properties` pins it to 25
+(Task 3 Step 6b) whatever `JAVA_HOME` launches Gradle. Re-run on 2026-10-01 after `./gradlew clean`,
+on detekt 2.0.0-alpha.6 with a 25 daemon: `RESULT format exit=0 seconds=0`, `RESULT check exit=0
+seconds=7`. With `JAVA_HOME` on Liberica 21 the daemon is still 25 and `check.sh` exits 0.
 
 `./scripts/test.sh :platform:metadata`, `./scripts/itest.sh` and `./scripts/build.sh` each ran clean:
 
@@ -2099,7 +2222,7 @@ class ApplicationBootsTest(
 }
 ```
 
-`fetchSingle` instead of `fetchOne(...)!!`: `detektItest` (type resolution) reports `UnsafeCallOnNullableType` on `!!`, and `fetchSingle` already throws when the row is missing.
+`fetchSingle` instead of `fetchOne(...)!!`: `fetchSingle` already throws when the row is missing. (`detektItest` also reported `UnsafeCallOnNullableType` on `!!` until 2026-10-01; since then tests may use `!!` and production code may not.)
 
 The verifier is `SpringModulithRuntimeAutoConfiguration$RuntimeApplicationModuleVerifier` in `spring-modulith-runtime-2.1.1.jar`: a package-private nested class, so Kotlin cannot name it. Its `@Bean` method is `applicationModuleVerifier` and is `@ConditionalOnProperty("spring.modulith.runtime.verification-enabled", matchIfMissing = false)`, so the test asserts `context.containsBean("applicationModuleVerifier")`. Proof the assertion bites: with `implementation(libs.spring.modulith.runtime)` removed from `bootstrap/build.gradle.kts`, `./scripts/itest.sh :bootstrap` reports `Modulith runtime verification is active, not just configured() FAILED` / `Expecting value to be true but was false` / `:bootstrap:itest: 2 tests, 1 failed, 0 skipped` / `RESULT itest exit=1`.
 
@@ -2241,7 +2364,7 @@ class TransactionalDdlPocTest(
 Design notes:
 - Every table name is unique per run (`<prefix>_<System.nanoTime()>`), so the tests do not depend on order or on leftovers from an earlier failed run; the committed table is dropped in `finally`.
 - Identifiers go through `DSL.name(...)` / `DSL.table(...)` and DDL through `dsl.createTable(...)` / `dsl.dropTableIfExists(...)`, the same policy `TableName` documents (Task 4). The existence check passes the rendered, quoted name to `to_regclass` as a bind value.
-- `fetchSingle` instead of `fetchOne(...)!!`, and `error(...)` instead of `throw IllegalStateException(...)`: `detektItest` reports `UnsafeCallOnNullableType` and `UseCheckOrError` otherwise.
+- `fetchSingle` instead of `fetchOne(...)!!`, and `error(...)` instead of `throw IllegalStateException(...)`: `detektItest` reports `UseCheckOrError` otherwise, and reported `UnsafeCallOnNullableType` on `!!` until tests were allowed it on 2026-10-01.
 - The annotations are exactly `ApplicationBootsTest`'s (`@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`), so both classes share one cached context and one container. Do not add `@MockitoBean`, `@TestPropertySource`, `@DirtiesContext` or a different `@Import` here: each changes the context cache key and starts a second PostgreSQL.
 
 - [ ] **Step 2: Run it**
@@ -2739,11 +2862,13 @@ Run:
 
 ```bash
 mv platform/metadata/src/main/kotlin/com/brokenfinger/vera/metadata/poc/DetektSmokeSample.kt.disabled platform/metadata/src/main/kotlin/com/brokenfinger/vera/metadata/poc/DetektSmokeSample.kt
-./gradlew :platform:metadata:detekt --console=plain -q; echo exit=$?
+./gradlew :platform:metadata:detektMain --console=plain -q; echo exit=$?
 mv platform/metadata/src/main/kotlin/com/brokenfinger/vera/metadata/poc/DetektSmokeSample.kt platform/metadata/src/main/kotlin/com/brokenfinger/vera/metadata/poc/DetektSmokeSample.kt.disabled
 ```
 
-Result (executed): `exit=1`. The report `platform/metadata/build/reports/detekt/detekt.md` lists 12 findings: `complexity, LongMethod (1)`, `complexity, NestedBlockDepth (1)`, `style, ForbiddenComment (1)` and `style, MagicNumber (9)`. No parse error on Kotlin 2.3 syntax. The sample sits in `main`, so production rules apply. With the file back to `.disabled`, `./scripts/check.sh` exits 0 and `git status --short` shows only the new `.disabled` file.
+Result (executed 2026-09-30 on detekt 1.23.8, then with `:platform:metadata:detekt`): `exit=1`. The report `platform/metadata/build/reports/detekt/detekt.md` lists 12 findings: `complexity, LongMethod (1)`, `complexity, NestedBlockDepth (1)`, `style, ForbiddenComment (1)` and `style, MagicNumber (9)`. No parse error on Kotlin 2.3 syntax. The sample sits in `main`, so production rules apply. With the file back to `.disabled`, `./scripts/check.sh` exits 0 and `git status --short` shows only the new `.disabled` file.
+
+Re-run 2026-10-01 on detekt 2.0.0-alpha.6 with the command above: `exit=1` and the same 12 findings on the same lines. `platform/metadata/build/reports/detekt/main.md` lists `## Issues (12)`: `complexity, LongMethod (1)` (`The function tooLongAndTooNested is too long (21). The maximum length is 10.`), `complexity, NestedBlockDepth (1)`, `style, ForbiddenComment (1)` and `style, MagicNumber (9)`. On 2.x the plain `detekt` task analyses nothing itself and only runs the four source-set tasks, so the old command fails the same way; `detektMain` is the task that reads `main`.
 
 - [ ] **Step 2: Prove the Kotlin LSP plugin resolves symbols across modules (PoC 4)**
 
@@ -2793,9 +2918,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: |
-            21
-            25
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - run: ./scripts/check.sh
 
@@ -2808,9 +2931,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: |
-            21
-            25
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - run: ./scripts/itest.sh
         env:
@@ -2825,9 +2946,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: |
-            21
-            25
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       # koverVerify is detached from `check` (Task 3 review C1); it pulls every test task including itest,
       # so this job needs Docker (present on ubuntu-latest) and runs integration coverage too.
@@ -2853,9 +2972,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: |
-            21
-            25
+          java-version: '25'
       - uses: gradle/actions/setup-gradle@v6
       - run: ./scripts/build.sh
 ```
@@ -2901,8 +3018,8 @@ Expected: both `RESULT ... exit=0` lines and the commit list. Paste all three ou
 ## Self-review against the spec
 
 - §4 layout: every path under `vera/` that belongs to build and code is created here; harness paths (`CLAUDE.md`, `.claude/`, `.githooks/`, `.harness/`, `docs/llm-wiki`, other `.github` files) are Plan B.
-- §8 testing policy: three suites ✓, real DB only ✓, detekt encodes principles 1, 2 (LongMethod, NestedBlockDepth) and 5 (UnnecessaryAbstractClass/Inheritance) ✓; principle 3 (wrap primitives) is a review item — the Kotlin compiler already enforces one-field value classes, so no machine rule adds anything ✓; ArchUnit rules (domain purity, exception bases, repository placement, module markers, import scope) ✓, Kover 80% ✓, Pitest is Phase 1 (spec says nightly on core modules, none exist yet) — documented gap, intentional.
-- §11 versions: all pinned ones verified on Maven Central 2026-09-30; BOM-managed ones deliberately unpinned. PoC 1 (Task 9), PoC 2 (Task 10), PoC 3 (Task 6 + Task 11), PoC 4 (Task 11) ✓.
+- §8 testing policy: three suites ✓, real DB only ✓, detekt encodes principles 1, 2 (LongMethod, NestedBlockDepth) and 5 (AbstractClassCanBeConcreteClass/AbstractClassCanBeInterface/UnnecessaryInheritance) ✓; principle 3 (wrap primitives) is a review item — the Kotlin compiler already enforces one-field value classes, so no machine rule adds anything ✓; ArchUnit rules (domain purity, exception bases, repository placement, module markers, import scope) ✓, Kover 80% ✓, Pitest is Phase 1 (spec says nightly on core modules, none exist yet) — documented gap, intentional.
+- §11 versions: all pinned ones verified on Maven Central 2026-09-30 (detekt 2.0.0-alpha.6 on 2026-10-01); BOM-managed ones deliberately unpinned. PoC 1 (Task 9), PoC 2 (Task 10), PoC 3 (Task 6 + Task 11), PoC 4 (Task 11) ✓.
 - §12 steps 2, 3, 6 ✓ (step 2's branch protection waits for Plan B, which adds the remaining required checks).
 - Type consistency: `TableName.of`, `physicalName()`, `InvalidTableNameException`, `ScriptSandbox(statementLimit)`, `TestcontainersConfiguration`, module marker names match across tasks.
 - No placeholders: every file has full content; the only deferred items (Pitest, springdoc, Kafka/Valkey dependencies) are named as later-phase work, not left as TODOs.

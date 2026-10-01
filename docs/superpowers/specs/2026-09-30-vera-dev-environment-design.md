@@ -21,7 +21,7 @@ comes from the origin chat and is **not** redesigned here; it is restated only w
 |---|---|---|
 | D1 | Public GitHub repository, **English committed artifacts** (code, commits, ADRs, CLAUDE.md, wiki). `README.ko.md` is the only Korean twin | Korean research notes live in the owner's central wiki, not in this repo |
 | D2 | Stack raised to Sept-2026 baseline: **Java 25 LTS, Spring Boot 4.1.x, Spring Modulith 2.1.x, Gradle 9.7.x, PostgreSQL 18, jOOQ 3.21.x (OSS, BOM override), Flyway (BOM), Valkey 9, Kafka 4.3, Testcontainers 2.0.x, Keycloak 26.7, springdoc 3.1, OTel starter** | The origin chat's Java 21 / Boot 3.x / PG 16 / Redis plan is superseded |
-| D3 | **Kotlin 2.3.21** (Boot 4.1 BOM-managed) until detekt/ktfmt ship stable Kotlin 2.4 support | ktfmt via Spotless (version-agnostic) + detekt 1.23.x, whose parser targets Kotlin 2.0 — warnings on 2.3 sources are accepted and verified in PoC 3; detekt 2.0 alpha is the fallback if rules misfire |
+| D3 | **Kotlin 2.3.21**, because the Spring Boot 4.1 BOM manages it; revisit Kotlin 2.4 with Boot 4.2 (GA 2026-11). Revised 2026-10-01: the linter no longer holds Kotlin back | ktfmt via Spotless (version-agnostic) + **detekt 2.0.0-alpha.x**, adopted 2026-10-01: 1.23.x (unmaintained since 2025-02, Kotlin 2.0 compiler) cannot run on JDK 25. 2.0 is built on Kotlin 2.4, runs on the JDK 25 daemon and resolves types on every source set. The alpha is pinned exactly, never ships, and reverts in one PR |
 | D4 | **Scenarios + gates, not ritual TDD.** The owner writes EARS acceptance scenarios in the ticket; the agent writes tests and code; PRs must ship tests; architecture tests and scoped mutation testing watch quality | The superpowers TDD skill is used only to pick verification scenarios. "No `.kt` without a test in the same PR" is a push/CI gate, not an edit-time rule |
 | D5 | Parallel work via **Orca**, 2–3 worktrees max, one owned module per ticket | Shared code (root build files, Flyway migrations, `common`) is changed only in a solo, preceding ticket |
 | D6 | GraalJS `js-community` 25.x on the stock JDK (interpreter only) to start; benchmark before considering GraalVM CE as runtime | Rule-engine performance target is deferred to Phase 3 |
@@ -109,8 +109,8 @@ auto-apply all still hold. Only the GitLab workflow (`/issue → /merge-request`
 | 0a | on edit | global `post-edit-check.sh` (secrets) + project `format.sh` | secrets: yes (exit 2) | adopt |
 | 0b | on Bash | global `block-danger.sh` + project patterns (`flywayClean`, `compose down -v`, `DROP SCHEMA`, `git checkout -- .`) | yes | adopt |
 | 1 | on Stop | `stop-gate.sh` → `scripts/check.sh` = spotlessCheck + detekt + unit tests + archTest, target < 60 s. Guards against `stop_hook_active` loops. Known false failure when a worker's Gradle runs concurrently (lead re-runs after worker idles) | yes | **trial (D7)** |
-| 2 | on push | `.githooks/pre-push`: `guards.sh` fail-closed — deleted test files, net assertion decrease without `Test-Change:` trailer, new `@Suppress`, detekt baseline file, non-English committed text in gated paths, secrets; then wiki gate fail-open (`Wiki-Skip: <reason>`); global Evidence Gate | yes | adopt |
-| 3 | CI (PR) | `ci.yml`: build · unit · itest (Testcontainers PG 18 / Kafka / Valkey) · `verifyArch` (Modulith `verify()` + Konsist) · spotless/detekt · Kover thresholds per module · `test-guard.yml` (label `test-change` required when `src/test` changes) · `claude-review.yml` (claude-code-action, once per PR open, `REVIEW.md`) | required checks | adopt |
+| 2 | on push | `.githooks/pre-push`: `guards.sh` fail-closed — deleted test files, net assertion decrease without `Test-Change:` trailer, new suppressions in any source set (`@Suppress`, `@file:Suppress`, `@SuppressWarnings`, `@[Suppress(...)]`), detekt baseline file, detekt configured outside the root `build.gradle.kts`, non-English committed text in gated paths, secrets; then wiki gate fail-open (`Wiki-Skip: <reason>`); global Evidence Gate | yes | adopt |
+| 3 | CI (PR) | `ci.yml`: build · unit · itest (Testcontainers PG 18 / Kafka / Valkey) · `verifyArch` (Modulith `verify()` + ArchUnit) · spotless/detekt · Kover thresholds per module · `test-guard.yml` (label `test-change` required when `src/test` changes) · `claude-review.yml` (claude-code-action, once per PR open, `REVIEW.md`) | required checks | adopt |
 | 4 | merge | branch protection on `main`: PR required, checks above required, linear history, no force push, enforce for admins, squash only, auto-delete branch | yes | adopt |
 | 5 | human | five-item design review (§3) | yes | adopt |
 
@@ -126,7 +126,7 @@ Every guard's failure output states **what to change and how** — the message i
 - **Specs**: design specs in `docs/superpowers/specs/` (brainstorming), plans in `docs/superpowers/plans/` (writing-plans),
   living module specs in `docs/specs/<module>.md` updated in the same PR that changes behaviour (trial; drop if unmaintained after Phase 1).
 - **Decisions**: one ADR per decision in `docs/llm-wiki/wiki/decisions/<YYYY-MM-DD>-<slug>.md` — Context / Options / Decision / Rationale /
-  **Accepted costs** / Outcome. Anything machine-enforceable is promoted to a `.claude/rules/` file or a Konsist/detekt rule.
+  **Accepted costs** / Outcome. Anything machine-enforceable is promoted to a `.claude/rules/` file or an ArchUnit/detekt rule.
 - **Definition of Done** (PR template, Evidence section):
   1. every acceptance criterion has a corresponding test;
   2. last 30 lines and exit code of `scripts/check.sh` and `scripts/itest.sh`;
@@ -140,13 +140,16 @@ Every guard's failure output states **what to change and how** — the message i
 
 ## 8. Testing policy (D4)
 
-- Three Gradle tasks per module: `test` (JVM-only, seconds), `itest` (`@Tag("it")`, Testcontainers), `archTest` (Modulith `verify()` + Konsist).
+- Three Gradle tasks per module: `test` (JVM-only, seconds), `itest` (`@Tag("it")`, Testcontainers), `archTest` (ArchUnit rules in `bootstrap`; Modulith `verify()` runs in `test`).
   `scripts/check.sh` runs the fast set; `scripts/itest.sh` the slow set; CI runs all.
 - Real database only: no H2. Dynamic schema and transactional DDL are verified against PostgreSQL 18 in Testcontainers. No container reuse — a fresh PostgreSQL per test JVM (~1 s) keeps runs order-independent.
-- The five core principles are **encoded in detekt** (`LongMethod threshold=10`, `ReturnCount`, `NestedBlockDepth`, `ForbiddenComment`),
-  `maxIssues=0`, no baseline file, `allWarningsAsErrors=true`.
-- Konsist rules (initial set): domain packages import no Spring/jOOQ; `*Repository` implementations are `internal`; value objects are
-  `value class`/`data class`; no `else` branches outside `when` exhaustiveness; Flyway files immutable once merged.
+- The five core principles are **encoded in detekt** (`LongMethod allowedLines=10`, `ReturnCount`, `NestedBlockDepth`, `ForbiddenComment`),
+  any finding fails the build (`failOnSeverity=Info`), no baseline file, `allWarningsAsErrors=true`.
+- ArchUnit rules in `bootstrap/src/archTest` (initial set): domain packages import no Spring/jOOQ/Jakarta and domain exceptions extend
+  `IllegalArgumentException`/`IllegalStateException` (`LayerRulesTest`); `*Repository` implementations live in an `internal` package and
+  module markers in a direct sub-package of the root (`NamingRulesTest`); every module reaches the importer (`ImportScopeTest`). Value
+  objects as `value class`/`data class` and no `else` outside `when` exhaustiveness stay review items, because bytecode cannot show them;
+  merged Flyway files are guarded by `scripts/guards.sh`.
 - Pitest (pitest-kotlin) nightly on `platform/rule`, ACL injection, 3-way merge, identification/reconciliation. Purpose: catch tautological tests. No score targets.
 - Micrometer + OpenTelemetry starter from Phase 1; p99 of dynamic queries is a first-class metric.
 
@@ -180,7 +183,7 @@ The loop closes only if capture is automatic, promotion is proposed by a machine
 |---|---|---|
 | **Capture** | `log-gate-event.sh` appends one JSON line to `.harness/events.jsonl` whenever a gate fires: `block-danger` block, Stop-gate block (with failing task), pre-push guard/wiki-gate block, critic `Blocking` finding, CI failure class (parsed from the PR check). Fields: `ts, gate, rule, ticket, branch, detail` | yes (hooks, git hook, CI step) |
 | **Distill** | `finish-task` skill ends every PR with a three-question retro appended to `docs/llm-wiki/wiki/concepts/lessons.md`: what was slow, what the agent got wrong, which rule was missing. Each lesson carries a `count:` that increments when the same lesson recurs. `/wiki-ingest` (enforced by the push gate) turns decisions into ADRs | semi (skill-driven, runs in the PR session) |
-| **Promote** | `harness-improve.yml` weekly: reads `events.jsonl` and `lessons.md`; for any lesson with `count ≥ 3` or any gate rule that fired ≥ 3 times for the same cause, opens **one PR** proposing exactly one of: a CLAUDE.md line, a `.claude/rules/*.md` file, a detekt/Konsist rule, a `guards.sh` or `block-danger` pattern, a test. The PR body cites the events. The lesson is marked `promoted:` and leaves prose | proposal yes, merge **owner only** |
+| **Promote** | `harness-improve.yml` weekly: reads `events.jsonl` and `lessons.md`; for any lesson with `count ≥ 3` or any gate rule that fired ≥ 3 times for the same cause, opens **one PR** proposing exactly one of: a CLAUDE.md line, a `.claude/rules/*.md` file, a detekt/ArchUnit rule, a `guards.sh` or `block-danger` pattern, a test. The PR body cites the events. The lesson is marked `promoted:` and leaves prose | proposal yes, merge **owner only** |
 | **Prune** | same routine, monthly: rules/hooks/CLAUDE.md lines with zero firings in `events.jsonl` for 30 days, plus `/doctor` prompt-audit findings, become a deletion PR (D7 is the first instance) | proposal yes, merge **owner only** |
 | **Measure** | weekly line in `.harness/metrics.md`: merged PRs, tokens per merged PR (from session summaries), critic Blocking per PR, gate firings by rule, CI failure rate, regressions (bugs on merged tickets), time-to-green | yes |
 
@@ -192,7 +195,7 @@ The monthly `/wiki-lint` + `/doctor` + dependency review runs inside the same ro
 Versions: Java 25 (Temurin, already installed; set `JAVA_HOME`/toolchain to 25), Kotlin 2.3.21, Spring Boot 4.1.x, Spring Modulith 2.1.x,
 Gradle 9.7.x, PostgreSQL 18, jOOQ 3.21.x (override BOM 3.20), Flyway (BOM) + `flyway-database-postgresql`, GraalJS `js-community` 25.x,
 Caffeine 3.2.x, Valkey 9, Kafka 4.3 + Spring Kafka 4.1, Testcontainers 2.0.x, Keycloak 26.7.x, springdoc 3.1.x, `spring-boot-starter-opentelemetry`,
-k6 2.x (upgrade local 0.56), Spotless + ktfmt, detekt 1.23.x, Konsist 0.17.x, Kover 0.9.x, Pitest 1.30 + pitest-kotlin.
+k6 2.x (upgrade local 0.56), Spotless + ktfmt, detekt 2.0.0-alpha.x (Gradle daemon on JDK 25), ArchUnit 1.5.x, Kover 0.9.x, Pitest 1.30 + pitest-kotlin.
 
 Known Boot 4 traps to pre-empt (owner's wiki): Jackson 3 (`tools.jackson`), starter modularisation (Flyway silently not running without its starter),
 `@MockBean` removed, JUnit 6, `commons-logging` exclude kills the app, `HttpHeaders` no longer a `Map`, jspecify nullability compile errors,
@@ -201,7 +204,7 @@ Gradle < 9 cannot parse the JDK 25 version string.
 PoCs, each ≤ half a day, results recorded as ADRs:
 1. jOOQ 3.21 + Boot 4.1 BOM override + Testcontainers PG 18: create a table inside a transaction, roll back, assert it is gone.
 2. GraalJS 25 on stock JDK 25: `HostAccess.NONE`, `IOAccess.NONE`, `statementLimit` all enforced; check whether `js-isolate-community` exists on Maven Central.
-3. Konsist 0.17.x and detekt 1.23.x run against Kotlin 2.3 sources in a Modulith multi-module build, and the five-principle detekt rules fire on a deliberately bad sample.
+3. detekt 2.0.0-alpha.x runs against Kotlin 2.3 sources and ArchUnit 1.5.x against their classes in a Modulith multi-module build, and the five-principle detekt rules fire on a deliberately bad sample.
 4. `kotlin-lsp` plugin resolves symbols across Gradle modules in Claude Code.
 
 ## 12. Phase 0 execution order (input to writing-plans)

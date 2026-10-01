@@ -2,22 +2,20 @@
 # 1 one method = one job (≤10 lines)   2 no else / early return   3 wrap primitives
 # 4 behaviour over getters             5 composition over inheritance
 # Rules that cannot be expressed here are covered by ArchUnit (archTest) or review.
-build:
-  maxIssues: 0
-  weights:
-    complexity: 2
-    style: 1
+# Every finding fails the build (failOnSeverity = Info in build.gradle.kts; 1.23 had maxIssues: 0).
+# detekt 2.x limits name the largest allowed value, where 1.23 named the first failing one. Each
+# limit below keeps the 1.23 pass/fail boundary, measured with probe functions on both versions.
 
 config:
   validation: true
-  warningsAsErrors: true
+  warningsAsErrors: true     # a deprecated key fails validation instead of warning
 
 complexity:
   active: true
   LongMethod:
     active: true
     # principle 1: a function declaration longer than 10 lines (signature to closing brace) is a smell
-    threshold: 11
+    allowedLines: 10
     ignoreAnnotated:
       - 'Test'
       - 'ParameterizedTest'
@@ -30,28 +28,29 @@ complexity:
       - 'Bean'
   LongParameterList:
     active: true
-    functionThreshold: 5
-    constructorThreshold: 6
+    allowedFunctionParameters: 4
+    allowedConstructorParameters: 5
     ignoreDefaultParameters: true
   NestedBlockDepth:
     active: true
-    threshold: 3             # principle 2: early return instead of nesting
+    allowedDepth: 2          # principle 2: early return instead of nesting
   TooManyFunctions:
     active: true
     # detekt's inherited test excludes only know src/test; the custom suites need naming too.
     excludes: &testSuites ['**/test/**', '**/itest/**', '**/archTest/**', '**/*.kts']
-    thresholdInClasses: 12
-    thresholdInInterfaces: 12
-    thresholdInObjects: 12
-    thresholdInFiles: 20
+    allowedFunctionsPerClass: 11
+    allowedFunctionsPerInterface: 11
+    allowedFunctionsPerObject: 11
+    allowedFunctionsPerFile: 19
+    allowedFunctionsPerEnum: 10   # 1.23's inherited limit; the 2.x default would allow 11
     ignoreDeprecated: true
     ignorePrivate: true
   CyclomaticComplexMethod:
     active: true
-    threshold: 8
+    allowedComplexity: 7
   LargeClass:
     active: true
-    threshold: 300
+    allowedLines: 299
 
 style:
   active: true
@@ -73,8 +72,9 @@ style:
     ignoreNumbers: ['-1', '0', '1', '2']
     ignoreAnnotation: true
     ignorePropertyDeclaration: true
+    ignoreLocalVariableDeclaration: false   # 1.23's default; 2.x would let `val x = 42` through
     ignoreCompanionObjectPropertyDeclaration: true
-  UnusedPrivateMember:
+  UnusedPrivateFunction:     # 1.23: UnusedPrivateMember
     active: true
   UseDataClass:
     active: true
@@ -85,8 +85,11 @@ style:
     active: true
     max: 3
     excludeGuardClauses: true   # principle 2: leading `if (...) throw` guards are the house style
-  UnnecessaryAbstractClass:
-    active: true             # principle 5: composition over inheritance
+  # principle 5: composition over inheritance. These two were 1.23's UnnecessaryAbstractClass.
+  AbstractClassCanBeConcreteClass:
+    active: true
+  AbstractClassCanBeInterface:
+    active: true
   UnnecessaryInheritance:
     active: true
 
@@ -105,11 +108,12 @@ exceptions:
 
 potential-bugs:
   active: true
-  # type resolution via detektMain — declared nullability only; inferred nulls are not caught until detekt 2.x
+  # Team rule: no `!!` in production code; tests may use it. Type resolution also catches `!!` on
+  # inferred nullability such as `items.firstOrNull()!!` — production sources only.
   UnsafeCallOnNullableType:
     active: true
-  # type resolution via detektMain — declared nullability only; inferred nulls are not caught until detekt 2.x
-  ImplicitDefaultLocale:
+    excludes: *testSuites
+  ImplicitDefaultLocale:     # type resolution, every source set
     active: true
 
 naming:
@@ -125,9 +129,9 @@ performance:
   SpreadOperator:
     active: false            # forwarding vararg needs *; one startup copy is not a cost (same shape as ReturnCount)
 
-# No `formatting:` section here on purpose. ktfmt via Spotless owns formatting, so the
-# detekt-formatting ruleset is not on the detekt classpath, and its config keys would then fail
-# `config.validation` as unknown properties.
+# No `ktlint:` section here on purpose. ktfmt via Spotless owns formatting, so detekt's ktlint
+# wrapper (detekt-rules-ktlint-wrapper, 1.23: detekt-formatting) is not on the detekt classpath, and
+# its config keys would then fail `config.validation` as unknown properties.
 
 coroutines:
   active: true

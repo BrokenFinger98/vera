@@ -1,0 +1,15 @@
+package com.brokenfinger.vera.metadata.poc.calibration.inside
+
+// detekt calibration fixture, one step inside a limit. Enabled only by scripts/detekt-calibrate.sh.
+
+fun params4(a: Int, b: Int, c: Int, d: Int): Int = a + b + c + d
+
+class Ctor5(
+    private val a: Int,
+    private val b: Int,
+    private val c: Int,
+    private val d: Int,
+    private val e: Int,
+) {
+    fun sum(): Int = a + b + c + d + e
+}

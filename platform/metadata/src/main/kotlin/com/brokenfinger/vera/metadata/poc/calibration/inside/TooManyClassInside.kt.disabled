@@ -1,0 +1,17 @@
+package com.brokenfinger.vera.metadata.poc.calibration.inside
+
+// detekt calibration fixture, one step inside a limit. Enabled only by scripts/detekt-calibrate.sh.
+
+class TooManyClassInside {
+    fun f01(x: Int): Int = x + 1
+    fun f02(x: Int): Int = x + 2
+    fun f03(x: Int): Int = x + 0
+    fun f04(x: Int): Int = x + 1
+    fun f05(x: Int): Int = x + 2
+    fun f06(x: Int): Int = x + 0
+    fun f07(x: Int): Int = x + 1
+    fun f08(x: Int): Int = x + 2
+    fun f09(x: Int): Int = x + 0
+    fun f10(x: Int): Int = x + 1
+    fun f11(x: Int): Int = x + 2
+}

@@ -87,7 +87,7 @@ you prove completion with evidence (command output, `git diff --stat`), never wi
 
 - Editing a merged Flyway migration (`V*.sql`). Add a new timestamped one.
 - Weakening or deleting a test, or adding `@Suppress`, to get green. Fix the code.
-- detekt baseline files, `maxIssues` > 0, lowering Kover `minBound`.
+- detekt baseline files, weakening detekt's `failOnSeverity = Info`, lowering Kover `minBound`.
 - `cd` inside a Bash command (deny rules on `.env*` make it prompt; use absolute paths, `git -C`).
 - Direct commits or pushes to `main`; work without an issue; PR > 400 changed lines without a split rationale.
 - Employer code, designs, customer data or names. Public sources only.
@@ -198,15 +198,16 @@ git commit -m "docs: add constitution, AGENTS.md symlink and AI review contract"
 # Vera — Coding Conventions
 
 Companion to `CLAUDE.md` (what is forbidden/decided). This is how to write the code. Machine-checked
-where possible: detekt (`config/detekt/detekt.yml`), Konsist (`bootstrap/src/archTest`), Modulith `verify()`.
+where possible: detekt (`config/detekt/detekt.yml`), ArchUnit (`bootstrap/src/archTest`: `LayerRulesTest`, `NamingRulesTest`,
+`ImportScopeTest`), Modulith `verify()`.
 
 ## Core principles (team standard, encoded in detekt)
 
-1. One method = one job, ≤10 lines (`LongMethod threshold 11`).
-2. No `else`; early return (`NestedBlockDepth 3`, `ReturnCount` disabled on purpose).
-3. Wrap primitives and collections in domain objects (`value class` with one property — Konsist).
+1. One method = one job, ≤10 lines (`LongMethod allowedLines 10`).
+2. No `else`; early return (`NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
+3. Wrap primitives and collections in domain objects (`value class` with one property — review; no ArchUnit rule sees it).
 4. Behaviour methods over getters (a domain object does things; it does not expose fields for others to decide).
-5. Composition over inheritance (`UnnecessaryAbstractClass`, `UnnecessaryInheritance`).
+5. Composition over inheritance (`AbstractClassCanBeConcreteClass`, `AbstractClassCanBeInterface`, `UnnecessaryInheritance`).
 
 Effective Kotlin defaults: `val` over `var`, no `!!` in production code, `data class` for values,
 `sealed interface` for closed hierarchies, scope functions only when they read better.
@@ -241,7 +242,7 @@ Dependency direction: `internal → application → domain`. Other modules see o
 
 - Unit (`src/test`): domain and application logic, no Spring context, AssertJ.
 - Integration (`src/itest`): `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`; real PostgreSQL 18.
-- Architecture (`src/archTest`): Konsist rules in `bootstrap`.
+- Architecture (`src/archTest`): ArchUnit rules in `bootstrap` — `LayerRulesTest`, `NamingRulesTest`, `ImportScopeTest`.
 - Name tests as behaviour: `` `rejects names longer than 63 characters` ``. One behaviour per test.
 - Acceptance criteria from the ticket (EARS) map 1:1 to test names.
 
@@ -249,9 +250,9 @@ Dependency direction: `internal → application → domain`. Other modules see o
 
 Never swallow exceptions. Log at the boundary once, with structured key=value pairs, no PII, no secrets.
 
-## Kotlin constructs to avoid until tooling catches up (Konsist 0.17 / detekt 1.23 parse Kotlin 2.0 syntax)
+## Kotlin syntax and the linter
 
-Context parameters, guard conditions in `when`, non-local `break`/`continue`. Record any parser failure in an ADR.
+detekt 2.0.0-alpha.x (Kotlin 2.4.10 compiler) parses current Kotlin, so tooling restricts no construct. Known difference from 1.23: `LongMethod` counts only the function body, so KDoc above a function is free while KDoc inside a body adds +2 (+1 one-line); `LargeClass` counts member and class KDoc (+2 each); `//` and `/* */` never count; no option excludes KDoc. Current code impact: 0.
 ```
 
 - [ ] **Step 2: Write the domain documents**
@@ -456,7 +457,7 @@ if [ $code -eq 0 ]; then exit 0; fi
 {
   echo "🛑 stop-gate: ./scripts/check.sh failed (exit $code). Fix before stopping. Last 40 lines (Gradle boilerplate is ~12, so the failing test name survives):"
   printf '%s\n' "$out" | tail -40
-  echo "Order: spotlessApply → detekt.md → test-results XML → archTest rule name. Never weaken a test or rule to pass."
+  echo "Order: spotlessApply → build/reports/detekt/<source set>.md → test-results XML → archTest rule name. Never weaken a test or rule to pass."
 } >&2
 exit 2
 ```
@@ -650,9 +651,9 @@ paths:
 ---
 # Domain packages
 
-- MUST NOT import `org.springframework.*`, `org.jooq.*`, `jakarta.*` (Konsist `LayerRulesTest`).
-- MUST wrap identifiers and names in `value class` types with one property (Konsist `NamingRulesTest`).
-- Exceptions MUST extend `IllegalArgumentException` (bad input) or `IllegalStateException` (bad state).
+- MUST NOT import `org.springframework.*`, `org.jooq.*`, `jakarta.*` (ArchUnit `LayerRulesTest`).
+- MUST wrap identifiers and names in `value class` types with one property (review; no ArchUnit rule sees it).
+- Exceptions MUST extend `IllegalArgumentException` (bad input) or `IllegalStateException` (bad state) — ArchUnit `LayerRulesTest`.
 - Behaviour lives on the object (`asset.retire(at)`), not in a service that reads its fields.
 - Verify: `./scripts/check.sh` (archTest).
 ```
@@ -980,7 +981,7 @@ Read this first. Every page is registered here; entries start with a date so mer
 ## Decisions
 - 2026-09-30 [[decisions/2026-09-30-public-english-repository]] — D1: public GitHub repo, English committed artifacts, README.ko.md only Korean twin
 - 2026-09-30 [[decisions/2026-09-30-stack-baseline-sept-2026]] — D2: Java 25, Boot 4.1, Modulith 2.1, PG 18, jOOQ 3.21, Valkey 9, Testcontainers 2
-- 2026-09-30 [[decisions/2026-09-30-kotlin-2-3-until-toolchain-catches-up]] — D3: Kotlin 2.3.21 (BOM) until detekt/ktfmt support 2.4
+- 2026-09-30 [[decisions/2026-09-30-kotlin-2-3-until-toolchain-catches-up]] — D3: Kotlin 2.3.21 (Boot 4.1 BOM) until Boot 4.2; detekt 2.0 alpha since 2026-10-01
 - 2026-09-30 [[decisions/2026-09-30-scenarios-and-gates-not-ritual-tdd]] — D4: EARS scenarios + gates + arch tests + scoped mutation instead of enforced TDD
 - 2026-09-30 [[decisions/2026-09-30-orca-worktrees-for-parallel-work]] — D5: Orca, 2–3 worktrees, one owned module per ticket
 - 2026-09-30 [[decisions/2026-09-30-graaljs-on-stock-jdk-first]] — D6: GraalJS js-community on stock JDK (interpreter), benchmark before GraalVM CE
@@ -1140,13 +1141,13 @@ if [ "$after" -lt "$before" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | gre
   violation "assertions decreased $before → $after" "Restore the assertions, or justify with a 'Test-Change: <reason>' trailer." assertion-decrease
 fi
 
-# 3. New @Suppress in production code
-if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/main/*' | grep -E '^\+.*@Suppress\(' >/dev/null; then
-  violation "new @Suppress( in production code" "Fix the reported issue instead of suppressing it. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
+# 3. New suppression in any Kotlin or Java source, tests included: @Suppress, @file:Suppress, @SuppressWarnings, @[Suppress(...)]
+if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java' | grep -E '^\+.*Suppress(Warnings)?\(' >/dev/null; then
+  violation "new suppression under src/ (@Suppress, @file:Suppress, @SuppressWarnings or @[Suppress(...)])" "Fix the reported issue instead of suppressing it: a suppression hides findings in tests as much as in production code. The array form @[Suppress(...)] counts too: detekt honours it and ktfmt keeps it. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
 fi
 
-# 4. detekt baseline files
-if echo "$changed" | grep -qE 'detekt-baseline\.xml$'; then
+# 4. detekt baseline files (detekt 2.x names them per source set, e.g. detekt-baseline-main.xml)
+if echo "$changed" | grep -qE 'detekt-baseline[^/]*\.xml$'; then
   violation "detekt baseline file added" "Delete it. Baselines hide debt from the gates (CLAUDE.md Forbidden)." detekt-baseline
 fi
 
@@ -1174,6 +1175,12 @@ if [ -n "$new_prod" ] && [ -z "$tests_touched" ]; then
   violation "new production Kotlin without tests: $(echo "$new_prod" | tr '\n' ' ')" \
     "Add the tests in this PR (DoD item 1). Every acceptance criterion maps to a test." missing-test-pair
 fi
+
+# 9. detekt touched outside the root build script: one module line (actions.clear(), which also drops
+#    DetektGateGuard, enabled = false, setSource(files())) would switch the gate off and still exit 0.
+detekt_lines="$(git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*.gradle.kts' ':(exclude)build.gradle.kts' | grep -E '^\+[^+]' | grep -E '[Dd]etekt' || true)"
+[ -n "$detekt_lines" ] && violation "detekt configured outside the root build.gradle.kts: $(echo "$detekt_lines" | head -3 | tr '\n' ' ')" \
+  "detekt is configured only in the root build.gradle.kts (Plan A Task 3); move the change there in a harness ticket." detekt-outside-root
 
 if [ $fail -eq 0 ]; then echo "guards: pass ($RANGE)"; fi
 exit $fail
@@ -1280,6 +1287,10 @@ git commit -m "chore: add fail-closed constitution guards and pre-push wiki gate
 /scripts/                  @BrokenFinger98
 /docs/llm-wiki/wiki/decisions/  @BrokenFinger98
 /config/detekt/            @BrokenFinger98
+# Build scripts can switch a gate off in one line (guards.sh check 9 is the machine half).
+/build.gradle.kts          @BrokenFinger98
+*.gradle.kts               @BrokenFinger98
+/gradle/                   @BrokenFinger98
 ```
 
 `.github/PULL_REQUEST_TEMPLATE.md`:
@@ -1510,7 +1521,7 @@ jobs:
             If mode is promote:
               - Find lessons with count >= 3 and status open, and gate rules that fired >= 3 times for the same cause in the last 30 days.
               - For EACH such item open exactly ONE pull request on a branch harness/promote-<slug> proposing exactly one of:
-                a CLAUDE.md line, a .claude/rules/<file>.md entry, a detekt or Konsist rule, a guards.sh/hook pattern, or a test.
+                a CLAUDE.md line, a .claude/rules/<file>.md entry, a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test.
                 Cite the event lines and lesson entry in the PR body. Mark the lesson status: promoted (pending) in the same PR.
               - If nothing qualifies, do nothing and print "promote: nothing due".
             If mode is prune:
@@ -1730,9 +1741,9 @@ Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected int
 
 ## [2026-09-30] Phase 0-A — repository, toolchain, PoCs ✅
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-a-repo-and-build.md`
-- Gradle 9.7.1 · Kotlin 2.3.21 · Boot 4.1.1 · Modulith 2.1.1 · PG 18 Testcontainers · detekt/ktfmt/Konsist/Kover
+- Gradle 9.7.1 · Kotlin 2.3.21 · Boot 4.1.1 · Modulith 2.1.1 · PG 18 Testcontainers · detekt/ktfmt/ArchUnit/Kover
 - Evidence: `RESULT check exit=0` · `RESULT itest exit=0` · CI run green (paste run URL)
-- PoC 1 transactional DDL: pass · PoC 2 GraalJS sandbox: pass (js-isolate-community: <200|404>) · PoC 3 detekt/Konsist on Kotlin 2.3: <pass|finding> · PoC 4 kotlin-lsp: <pass|fallback>
+- PoC 1 transactional DDL: pass · PoC 2 GraalJS sandbox: pass (js-isolate-community: <200|404>) · PoC 3 detekt/ArchUnit on Kotlin 2.3: <pass|finding> · PoC 4 kotlin-lsp: <pass|fallback>
 
 ## [2026-09-30] Phase 0-B — harness, gates, wiki, self-improvement loop ✅
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-b-harness.md`
@@ -1824,20 +1835,20 @@ Boot 4 starter modularisation fails silently when a starter is missing; Testcont
 `2026-09-30-kotlin-2-3-until-toolchain-catches-up.md`:
 
 ```markdown
-# D3 — Kotlin 2.3.21 until the lint toolchain supports 2.4
+# D3 — Kotlin 2.3.21 while the Spring Boot BOM manages it
 
 ## Context
-Kotlin 2.4.20 is current, but detekt's stable line (1.23.8) and ktlint's stable line embed a Kotlin 2.0 parser; only alphas support 2.4. Boot 4.1.1's BOM manages Kotlin 2.3.21.
+Kotlin 2.4.20 is current; Spring Boot 4.1.1's BOM manages Kotlin 2.3.21. On 2026-09-30 the linter was a second reason to stay: detekt's stable line (1.23.8, no release since 2025-02) embeds a Kotlin 2.0.21 compiler that cannot run on JDK 25 or read Kotlin 2.3 stdlib metadata. On 2026-10-01 detekt 2.0.0-alpha.x replaced it: built on Kotlin 2.4, tested against JDK 25, type resolution on every source set (Plan A, Task 3 decision).
 ## Options considered
-Kotlin 2.4.20 with alpha linters · Kotlin 2.3.21 with stable linters.
+Kotlin 2.4.20 over the BOM · Kotlin 2.3.21 as the BOM manages it.
 ## Decision
-Kotlin 2.3.21 (BOM-managed). Avoid constructs newer than the parsers know (`docs/development-rules.md`).
+Kotlin 2.3.21 (BOM-managed). The reason is the Boot BOM, no longer the linter: detekt 2.0.0-alpha.x, adopted on 2026-10-01 for JDK 25 support and full type resolution, parses Kotlin 2.4.
 ## Rationale
-Deterministic formatting and linting are gates; an alpha gate is a flaky gate.
+The BOM's Kotlin is the version Boot 4.1 is built and tested with; overriding it buys no feature the project needs yet.
 ## Accepted costs
-No Kotlin 2.4 features yet; detekt may warn on some 2.3 syntax (PoC 3 records any parse failure).
+No Kotlin 2.4 features yet. The linter is an alpha: pinned exactly, a development tool that never ships, reverted in one PR if it misbehaves. Its one measured boundary difference is KDoc: `LongMethod` counts KDoc inside a function body (+2, +1 one-line) but not above it, `LargeClass` counts member and class KDoc (+2 each), comments never count, and no option excludes KDoc; current code impact: 0. `scripts/detekt-calibrate.sh` re-measures every boundary on each bump.
 ## Outcome
-Revisit when detekt 2.0 or ktlint 2.0 reach GA with Kotlin 2.4 support.
+Revisit Kotlin 2.4 with Spring Boot 4.2 (GA 2026-11).
 ```
 
 `2026-09-30-scenarios-and-gates-not-ritual-tdd.md`:
@@ -1850,7 +1861,7 @@ Böckeler (martinfowler.com, 2026-08-10) found no quality difference between age
 ## Options considered
 Enforce TDD via skills/hooks · scenarios + gates · scenarios only.
 ## Decision
-The owner writes EARS acceptance criteria in the ticket; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` + Konsist in `archTest`, Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
+The owner writes EARS acceptance criteria in the ticket; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` (`test`) + ArchUnit (`archTest`), Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
 ## Rationale
 What the machine can enforce is "tests come with the code" and "tests are not weakened"; the order of writing is unprovable and, per the evidence, not valuable.
 ## Accepted costs
