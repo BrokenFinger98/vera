@@ -4,7 +4,7 @@ spring-boot = "4.1.1"
 spring-modulith = "2.1.1"
 graalvm-polyglot = "25.4.4.1.1"
 archunit = "1.5.1"
-detekt = "2.0.0-alpha.6"     # alpha, pinned exactly: 1.23.x cannot run on JDK 25 (Plan A Task 3)
+detekt = "2.0.0-alpha.6"     # alpha, pinned exactly (Plan A Task 3); after any bump run scripts/detekt-calibrate.sh
 spotless = "8.10.3"
 kover = "0.9.11"
 

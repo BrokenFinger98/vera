@@ -1,0 +1,43 @@
+package com.brokenfinger.vera.metadata.poc.calibration.outside
+
+// detekt calibration fixture, one step outside a limit. Enabled only by scripts/detekt-calibrate.sh.
+
+fun f01(x: Int): Int = x + 1
+
+fun f02(x: Int): Int = x + 2
+
+fun f03(x: Int): Int = x + 0
+
+fun f04(x: Int): Int = x + 1
+
+fun f05(x: Int): Int = x + 2
+
+fun f06(x: Int): Int = x + 0
+
+fun f07(x: Int): Int = x + 1
+
+fun f08(x: Int): Int = x + 2
+
+fun f09(x: Int): Int = x + 0
+
+fun f10(x: Int): Int = x + 1
+
+fun f11(x: Int): Int = x + 2
+
+fun f12(x: Int): Int = x + 0
+
+fun f13(x: Int): Int = x + 1
+
+fun f14(x: Int): Int = x + 2
+
+fun f15(x: Int): Int = x + 0
+
+fun f16(x: Int): Int = x + 1
+
+fun f17(x: Int): Int = x + 2
+
+fun f18(x: Int): Int = x + 0
+
+fun f19(x: Int): Int = x + 1
+
+fun f20(x: Int): Int = x + 2

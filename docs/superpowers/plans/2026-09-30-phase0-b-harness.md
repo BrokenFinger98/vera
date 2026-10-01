@@ -252,7 +252,7 @@ Never swallow exceptions. Log at the boundary once, with structured key=value pa
 
 ## Kotlin syntax and the linter
 
-detekt 2.0.0-alpha.x (Kotlin 2.4.10 compiler) parses current Kotlin, so tooling restricts no construct; one known difference is that the alpha counts KDoc `/**` and `*/` lines toward `LongMethod` (and `LargeClass`).
+detekt 2.0.0-alpha.x (Kotlin 2.4.10 compiler) parses current Kotlin, so tooling restricts no construct. Known difference from 1.23: `LongMethod` counts only the function body, so KDoc above a function is free while KDoc inside a body adds +2 (+1 one-line); `LargeClass` counts member and class KDoc (+2 each); `//` and `/* */` never count; no option excludes KDoc. Current code impact: 0.
 ```
 
 - [ ] **Step 2: Write the domain documents**
@@ -1141,9 +1141,9 @@ if [ "$after" -lt "$before" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | gre
   violation "assertions decreased $before → $after" "Restore the assertions, or justify with a 'Test-Change: <reason>' trailer." assertion-decrease
 fi
 
-# 3. New @Suppress in production code
-if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/main/*' | grep -E '^\+.*@Suppress\(' >/dev/null; then
-  violation "new @Suppress( in production code" "Fix the reported issue instead of suppressing it. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
+# 3. New suppression (@Suppress, @file:Suppress, @SuppressWarnings) in any Kotlin or Java source, tests included
+if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java' | grep -E '^\+.*@(file:)?Suppress(Warnings)?\(' >/dev/null; then
+  violation "new @Suppress/@file:Suppress/@SuppressWarnings under src/" "Fix the reported issue instead of suppressing it: a suppression hides findings in tests as much as in production code. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
 fi
 
 # 4. detekt baseline files (detekt 2.x names them per source set, e.g. detekt-baseline-main.xml)
@@ -1836,7 +1836,7 @@ Kotlin 2.3.21 (BOM-managed). The reason is the Boot BOM, no longer the linter: d
 ## Rationale
 The BOM's Kotlin is the version Boot 4.1 is built and tested with; overriding it buys no feature the project needs yet.
 ## Accepted costs
-No Kotlin 2.4 features yet. The linter is an alpha: pinned exactly, a development tool that never ships, reverted in one PR if it misbehaves.
+No Kotlin 2.4 features yet. The linter is an alpha: pinned exactly, a development tool that never ships, reverted in one PR if it misbehaves. Its one measured boundary difference is KDoc: `LongMethod` counts KDoc inside a function body (+2, +1 one-line) but not above it, `LargeClass` counts member and class KDoc (+2 each), comments never count, and no option excludes KDoc; current code impact: 0. `scripts/detekt-calibrate.sh` re-measures every boundary on each bump.
 ## Outcome
 Revisit Kotlin 2.4 with Spring Boot 4.2 (GA 2026-11).
 ```

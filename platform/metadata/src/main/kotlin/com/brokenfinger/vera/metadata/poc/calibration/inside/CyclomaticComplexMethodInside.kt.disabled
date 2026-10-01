@@ -1,0 +1,13 @@
+package com.brokenfinger.vera.metadata.poc.calibration.inside
+
+// detekt calibration fixture, one step inside a limit. Enabled only by scripts/detekt-calibrate.sh.
+
+fun complexitySeven(code: String): String =
+    when (code) {
+        "a" -> "alpha"
+        "b" -> "bravo"
+        "c" -> "charlie"
+        "d" -> "delta"
+        "e" -> "echo"
+        else -> "other"
+    }

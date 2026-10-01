@@ -1,0 +1,11 @@
+package com.brokenfinger.vera.metadata.poc.calibration.inside
+
+// detekt calibration fixture, one step inside a limit. Enabled only by scripts/detekt-calibrate.sh.
+
+fun depthTwo(items: List<Int>): Int {
+    var total = 0
+    for (item in items) {
+        if (item > 0) total += item
+    }
+    return total
+}

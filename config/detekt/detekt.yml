@@ -108,11 +108,12 @@ exceptions:
 
 potential-bugs:
   active: true
-  # Both need type resolution, which every source-set task (detektMain, detektTest, detektItest,
-  # detektArchTest) has; inferred nullability such as `items.firstOrNull()!!` is caught too.
+  # Team rule: no `!!` in production code; tests may use it. Type resolution also catches `!!` on
+  # inferred nullability such as `items.firstOrNull()!!` — production sources only.
   UnsafeCallOnNullableType:
     active: true
-  ImplicitDefaultLocale:
+    excludes: *testSuites
+  ImplicitDefaultLocale:     # type resolution, every source set
     active: true
 
 naming:

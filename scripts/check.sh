@@ -9,9 +9,9 @@
 # and the detekt/test cache entry stays warm (Task 3 quality review).
 run_gradle format spotlessCheck || { code=$?; echo "check.sh: formatting failed — run ./gradlew spotlessApply, then rerun." >&2; exit $code; }
 
-# One detekt task per source set, each with type resolution, so UnsafeCallOnNullableType and the
-# other type-resolution rules cover test code too. All four are on `check`. detektItest compiles the
-# itest sources but does not run them, so no Docker.
+# One detekt task per source set, all four with type resolution and all on `check`.
+# UnsafeCallOnNullableType (`!!`) checks production sources only; tests may use `!!`.
+# detektItest compiles the itest sources but does not run them, so no Docker.
 run_gradle check detektMain detektTest detektItest detektArchTest test archTest
 code=$?
 if [ $code -ne 0 ]; then
