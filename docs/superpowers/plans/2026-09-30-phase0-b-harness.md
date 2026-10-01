@@ -350,7 +350,7 @@ git commit -m "docs: add coding conventions, glossary, context map and living-sp
 
 ### Task 3: Hooks and project settings
 
-Five hooks. `log-gate-event.sh` is called by the other hooks, by `.githooks/pre-push` and by `guards.sh`; it is the single writer of `.harness/events.jsonl`. `block-project-danger.sh` extends the global `block-danger.sh` with Vera-specific destructive commands (deterministic and logged; permission deny rules cannot express "anywhere in the command").
+Five hooks. `log-gate-event.sh` is called by the other hooks, by `.githooks/pre-push` and by `guards.sh`; it is the single writer of `.harness/events.jsonl`. `block-project-danger.sh` extends the global `block-danger.sh` with Vera-specific destructive commands and git-hook bypasses (deterministic and logged; permission deny rules cannot express "anywhere in the command").
 
 **Files:**
 - Create: `.claude/hooks/log-gate-event.sh`, `.claude/hooks/inject-state.sh`, `.claude/hooks/stop-gate.sh`, `.claude/hooks/format.sh`, `.claude/hooks/block-project-danger.sh`, `.claude/settings.json`, `scripts/test-hooks.sh`, `.worktreeinclude`
@@ -487,7 +487,7 @@ exit 0
 
 ```bash
 #!/usr/bin/env bash
-# PreToolUse(Bash) — Vera-specific destructive commands, on top of the global block-danger.sh. exit 2 = blocked.
+# PreToolUse(Bash) — Vera-specific destructive commands and git-hook bypasses, on top of the global block-danger.sh. exit 2 = blocked.
 set -uo pipefail
 INPUT="$(cat)"
 CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
@@ -503,12 +503,21 @@ block() {
   exit 2
 }
 m() { printf '%s' "$CMD" | grep -qiE "$1"; }
+# Values the command gives core.hooksPath ('git config ... core.hooksPath V', 'git -c core.hooksPath=V').
+# A read gives none; the fd number of a redirect after a read ('core.hooksPath 2>/dev/null') is dropped.
+hooks_path_values() {
+  printf '%s' "$CMD" | grep -oiE 'config([[:space:]]+[^[:space:];&|]+)*[[:space:]]+core\.hookspath[[:space:]]+[^[:space:];&|<>()]+|-c[[:space:]]+core\.hookspath=[^[:space:];&|<>()]*' \
+    | sed -E "s/.*[=[:space:]]//; s/[\"']//g" | grep -vxE '[0-9]+'
+}
 
 m 'flyway(Clean|Repair)|flyway[[:space:]]+(clean|repair)' && block "Flyway clean/repair" flyway-clean "Migrations are immutable; fix forward with a new V<timestamp>__*.sql."
 m 'compose[[:space:]]+down.*(-v|--volumes)' && block "compose down with volumes" compose-down-volumes "Volumes hold the demo database; use 'docker compose down' without -v."
 m 'drop[[:space:]]+schema' && block "DROP SCHEMA" drop-schema "Schema changes go through Flyway migrations reviewed in a PR."
 m 'git[[:space:]]+(checkout|restore)[[:space:]]+(--[[:space:]]+)?\.([[:space:]]|$)' && block "discarding all working-tree changes" git-discard-all "Discard single files by path, never the whole tree."
 m 'git[[:space:]]+push.*(--force|-f([[:space:]]|$))' && block "force push" force-push "History is linear and protected; open a new commit instead."
+m 'git[[:space:]].*--no-verify([^-[:alnum:]]|$)' && block "skipping git hooks with --no-verify" no-verify "The guards are fail-closed; fix the code instead of skipping them."
+m 'unset[^;&|]*core\.hookspath' && block "unsetting core.hooksPath" hooks-path "core.hooksPath installs the push gate; it stays .githooks."
+hooks_path_values | grep -vx '\.githooks' >/dev/null && block "core.hooksPath other than .githooks" hooks-path "core.hooksPath installs the push gate; only 'git config core.hooksPath .githooks' is allowed."
 exit 0
 ```
 
@@ -516,7 +525,7 @@ exit 0
 
 ```json
 {
-  "$comment": "Project-shared settings: allow/deny/hooks only. Never set defaultMode here — project files cannot grant bypass and doing so degrades the session to manual (owner wiki, 2026-09-21). Destructive-command blocks live in hooks/block-project-danger.sh so they match anywhere in a command and are logged.",
+  "$comment": "Project-shared settings: allow/deny, attribution and hooks only. Never set defaultMode here — project files cannot grant bypass and doing so degrades the session to manual (owner wiki, 2026-09-21). Empty attribution: commits and PRs carry no AI trailer or link (owner rule). Destructive-command and hook-bypass blocks live in hooks/block-project-danger.sh so they match anywhere in a command and are logged.",
   "permissions": {
     "allow": [
       "Bash(./gradlew *)",
@@ -540,6 +549,7 @@ exit 0
       "Read(./.env.*)"
     ]
   },
+  "attribution": { "commit": "", "pr": "", "sessionUrl": false },
   "hooks": {
     "SessionStart": [
       { "matcher": "", "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/inject-state.sh" } ] }
@@ -600,14 +610,17 @@ fi
 # format: ignores non-Kotlin files and exits 0
 echo '{"tool_input":{"file_path":"'"$ROOT"'/README.md"}}' | "$H/format.sh" && ok "format ignores md" || bad "format ignores md"
 
-# block-project-danger: blocks the five destructive patterns (exit 2), passes a normal command (exit 0).
+# block-project-danger: blocks the destructive and hook-bypass patterns (exit 2), passes normal commands (exit 0).
 # Events written by these probes are discarded by restoring the backup (portable; macOS head has no negative -n).
 bak="$(mktemp)"; cp "$ROOT/.harness/events.jsonl" "$bak" 2>/dev/null || : > "$bak"
-for c in "./gradlew flywayClean" "docker compose down -v" "psql -c 'drop schema vera cascade'" "git checkout -- ." "git push --force origin main"; do
+for c in "./gradlew flywayClean" "docker compose down -v" "psql -c 'drop schema vera cascade'" "git checkout -- ." "git push --force origin main" \
+         "git push --no-verify origin main" "git config core.hooksPath /dev/null" "git config --unset core.hooksPath" "git -c core.hooksPath=/dev/null push origin main"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1
   [ $? -eq 2 ] && ok "block-project-danger blocks: $c" || bad "block-project-danger blocks: $c"
 done
-echo '{"tool_input":{"command":"./scripts/check.sh"}}' | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes check.sh" || bad "block-project-danger passes check.sh"
+for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config --get core.hooksPath"; do
+  echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes: $c" || bad "block-project-danger passes: $c"
+done
 cp "$bak" "$ROOT/.harness/events.jsonl"; rm -f "$bak"
 
 # guards: current HEAD against itself must pass

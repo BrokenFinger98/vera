@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash) — Vera-specific destructive commands, on top of the global block-danger.sh. exit 2 = blocked.
+# PreToolUse(Bash) — Vera-specific destructive commands and git-hook bypasses, on top of the global block-danger.sh. exit 2 = blocked.
 set -uo pipefail
 INPUT="$(cat)"
 CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
@@ -15,10 +15,19 @@ block() {
   exit 2
 }
 m() { printf '%s' "$CMD" | grep -qiE "$1"; }
+# Values the command gives core.hooksPath ('git config ... core.hooksPath V', 'git -c core.hooksPath=V').
+# A read gives none; the fd number of a redirect after a read ('core.hooksPath 2>/dev/null') is dropped.
+hooks_path_values() {
+  printf '%s' "$CMD" | grep -oiE 'config([[:space:]]+[^[:space:];&|]+)*[[:space:]]+core\.hookspath[[:space:]]+[^[:space:];&|<>()]+|-c[[:space:]]+core\.hookspath=[^[:space:];&|<>()]*' \
+    | sed -E "s/.*[=[:space:]]//; s/[\"']//g" | grep -vxE '[0-9]+'
+}
 
 m 'flyway(Clean|Repair)|flyway[[:space:]]+(clean|repair)' && block "Flyway clean/repair" flyway-clean "Migrations are immutable; fix forward with a new V<timestamp>__*.sql."
 m 'compose[[:space:]]+down.*(-v|--volumes)' && block "compose down with volumes" compose-down-volumes "Volumes hold the demo database; use 'docker compose down' without -v."
 m 'drop[[:space:]]+schema' && block "DROP SCHEMA" drop-schema "Schema changes go through Flyway migrations reviewed in a PR."
 m 'git[[:space:]]+(checkout|restore)[[:space:]]+(--[[:space:]]+)?\.([[:space:]]|$)' && block "discarding all working-tree changes" git-discard-all "Discard single files by path, never the whole tree."
 m 'git[[:space:]]+push.*(--force|-f([[:space:]]|$))' && block "force push" force-push "History is linear and protected; open a new commit instead."
+m 'git[[:space:]].*--no-verify([^-[:alnum:]]|$)' && block "skipping git hooks with --no-verify" no-verify "The guards are fail-closed; fix the code instead of skipping them."
+m 'unset[^;&|]*core\.hookspath' && block "unsetting core.hooksPath" hooks-path "core.hooksPath installs the push gate; it stays .githooks."
+hooks_path_values | grep -vx '\.githooks' >/dev/null && block "core.hooksPath other than .githooks" hooks-path "core.hooksPath installs the push gate; only 'git config core.hooksPath .githooks' is allowed."
 exit 0

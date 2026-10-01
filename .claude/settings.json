@@ -1,5 +1,5 @@
 {
-  "$comment": "Project-shared settings: allow/deny/hooks only. Never set defaultMode here — project files cannot grant bypass and doing so degrades the session to manual (owner wiki, 2026-09-21). Destructive-command blocks live in hooks/block-project-danger.sh so they match anywhere in a command and are logged.",
+  "$comment": "Project-shared settings: allow/deny, attribution and hooks only. Never set defaultMode here — project files cannot grant bypass and doing so degrades the session to manual (owner wiki, 2026-09-21). Empty attribution: commits and PRs carry no AI trailer or link (owner rule). Destructive-command and hook-bypass blocks live in hooks/block-project-danger.sh so they match anywhere in a command and are logged.",
   "permissions": {
     "allow": [
       "Bash(./gradlew *)",
@@ -23,6 +23,7 @@
       "Read(./.env.*)"
     ]
   },
+  "attribution": { "commit": "", "pr": "", "sessionUrl": false },
   "hooks": {
     "SessionStart": [
       { "matcher": "", "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/inject-state.sh" } ] }
