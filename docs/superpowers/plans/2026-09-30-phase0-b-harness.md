@@ -1176,8 +1176,8 @@ if [ -n "$new_prod" ] && [ -z "$tests_touched" ]; then
     "Add the tests in this PR (DoD item 1). Every acceptance criterion maps to a test." missing-test-pair
 fi
 
-# 9. detekt touched outside the root build script: one module line (actions.clear(), enabled = false,
-#    disableDefaultRuleSets, setSource(files())) would switch the gate off and still exit 0.
+# 9. detekt touched outside the root build script: one module line (actions.clear(), which also drops
+#    DetektGateGuard, enabled = false, setSource(files())) would switch the gate off and still exit 0.
 detekt_lines="$(git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*.gradle.kts' ':(exclude)build.gradle.kts' | grep -E '^\+[^+]' | grep -E '[Dd]etekt' || true)"
 [ -n "$detekt_lines" ] && violation "detekt configured outside the root build.gradle.kts: $(echo "$detekt_lines" | head -3 | tr '\n' ' ')" \
   "detekt is configured only in the root build.gradle.kts (Plan A Task 3); move the change there in a harness ticket." detekt-outside-root

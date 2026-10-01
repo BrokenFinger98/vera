@@ -563,7 +563,9 @@ configure(codeProjects) {
             sarif.required.set(false)
         }
         // Tamper evidence: a module override that weakens the gate fails before any analysis.
-        doFirst(DetektGateGuard(path, baseline, ignoreFailures, failOnSeverity))
+        doFirst(
+            DetektGateGuard(path, baseline, ignoreFailures, failOnSeverity, disableDefaultRuleSets)
+        )
     }
 
     // Coverage is aggregated at the root, so the per-module koverVerify must stay off `check`.
@@ -625,14 +627,16 @@ class SuiteSummaryListener(private val taskPath: String) : TestListener {
 
 /**
  * Fails a detekt task before it analyses anything when a module has weakened the gate: a baseline
- * that would hide findings, `ignoreFailures`, or a `failOnSeverity` other than Info. It holds only
- * the task path and providers, so it stays configuration-cache serialisable.
+ * that would hide findings, `ignoreFailures`, a `failOnSeverity` other than Info, or disabled
+ * default rule sets. It holds only the task path and providers, so it stays configuration-cache
+ * serialisable.
  */
 class DetektGateGuard(
     private val taskPath: String,
     private val baseline: Provider<RegularFile>,
     private val ignoreFailures: Provider<Boolean>,
     private val failOnSeverity: Provider<FailOnSeverity>,
+    private val disableDefaultRuleSets: Provider<Boolean>,
 ) : Action<Task> {
     override fun execute(task: Task) {
         check(!baseline.isPresent) {
@@ -646,6 +650,10 @@ class DetektGateGuard(
         check(failOnSeverity.orNull == FailOnSeverity.Info) {
             "$taskPath: detekt failOnSeverity must stay Info so any finding fails the build, not " +
                 "${failOnSeverity.orNull}. Remove the override and fix the findings."
+        }
+        check(!disableDefaultRuleSets.get()) {
+            "$taskPath: detekt default rule sets must stay enabled; " +
+                "remove the override and fix the findings."
         }
     }
 }
@@ -804,7 +812,7 @@ Run each of these from the repository root with `JAVA_HOME=/Library/Java/JavaVir
 ```
 Expected: the Gradle help banner then `exit=0`; `spotlessCheck` silent with `exit=0` (if it fails, run `spotlessApply` and inspect the diff); the task list containing `detekt`, `detektMain`, `detektTest`, `detektItest`, `detektArchTest`, `test`, `itest`, `archTest` and `koverVerify`. If plugin resolution fails, the error names the plugin id and version — fix the catalog, do not change versions elsewhere.
 
-Decision (2026-10-01): detekt 2.0.0-alpha.6 replaces 1.23.8, and the Gradle daemon runs on JDK 25 again. detekt 1.23 has had no release since 2025-02 and cannot run on JDK 25: 1.23.8 bundles Kotlin 2.0.21, whose shaded IntelliJ `JavaVersion` parser rejects any feature version above 24, so on a Java 25 daemon the task died with `> 25.0.3` before analysis started. The 2026-09-30 decision therefore pinned the daemon to JDK 21 through `gradle/gradle-daemon-jvm.properties`; the same file now pins it to 25 by daemon-JVM criteria (Step 6b), so local and CI daemons agree whatever `JAVA_HOME` launches Gradle. 2.0.0-alpha.6 (2026-08-04) is built on Kotlin 2.4.10 and tested against JDK 25; its classpath needed no Kotlin pin. It is an alpha, so the catalog pins it exactly; it is a development tool that never ships in `vera.jar`; reverting it is one PR (catalog, root build script, `detekt.yml`, `check.sh`, `ci.yml`, daemon criteria). Type resolution is now full: every source set has its own type-resolved task (`detektMain`, `detektTest`, `detektItest`, `detektArchTest`), all four on `check`, and each takes classpath and `jvmTarget` 25 from its Kotlin compile task. A throwaway `fun firstLength(items: List<String>): Int = items.firstOrNull()!!.length` in `bootstrap` main passed `:bootstrap:detektMain` with `exit=0` on 1.23.8 (its compiler could not read Kotlin 2.3 stdlib metadata) and fails it on 2.0.0-alpha.6 with `exit=1`: `FirstLength.kt:3:45 Calling !! on a nullable type will throw a NullPointerException at runtime in case the value is null. It should be avoided. [UnsafeCallOnNullableType]`. `config.validation` rejected 13 properties of the 1.23 file (the `build` section, ten threshold keys, `UnusedPrivateMember`, `UnnecessaryAbstractClass`); Step 5 is the migrated file. Any finding fails the build through `failOnSeverity = Info` (2.x has no `maxIssues`): with `MagicNumber` set to `severity: warning` and `ForbiddenComment` to `info`, a probe holding one of each still fails with `exit=1`, and with the plugin default (`Error`) it would pass. The plugin's `detekt-baseline.xml` convention is cleared: a generated `detekt-baseline-main.xml` suppresses its finding without that line and is ignored with it. `UnsafeCallOnNullableType` excludes the test suites, because the team rule is "no `!!` in production code" and tests may use it: a `!!` probe fails `detektMain` and passes `detektTest`, `detektItest` and `detektArchTest` (before, the inherited default exempted `src/test` alone). The gate is tamper-evident: `DetektGateGuard`, a `doFirst` action on every detekt task, fails before any analysis when a module sets a baseline, `ignoreFailures` or a `failOnSeverity` other than Info. Each override, tried in `platform/metadata`, fails `detektMain` with its own message, e.g. `detekt failOnSeverity must stay Info so any finding fails the build, not Error. Remove the override and fix the findings.` A module script can still switch a task off without touching those settings (`actions.clear()`, `enabled = false`, `disableDefaultRuleSets`, `setSource(files())` each exit 0), so Plan B's pre-push guard check 9 rejects any added `detekt` line in a `*.gradle.kts` other than the root one, and CODEOWNERS puts every build script in front of the owner. ArchUnit stays in place of Konsist (Task 6): Konsist 0.17.3 still depends on `kotlin-compiler-embeddable:2.0.21`. The Gradle 10 blocker left with 1.23 as well: 1.23.8 called `ReportingExtension.file(String)`, which Gradle 10 removes, and 2.0 uses `ReportingExtension.baseDirectory`.
+Decision (2026-10-01): detekt 2.0.0-alpha.6 replaces 1.23.8, and the Gradle daemon runs on JDK 25 again. detekt 1.23 has had no release since 2025-02 and cannot run on JDK 25: 1.23.8 bundles Kotlin 2.0.21, whose shaded IntelliJ `JavaVersion` parser rejects any feature version above 24, so on a Java 25 daemon the task died with `> 25.0.3` before analysis started. The 2026-09-30 decision therefore pinned the daemon to JDK 21 through `gradle/gradle-daemon-jvm.properties`; the same file now pins it to 25 by daemon-JVM criteria (Step 6b), so local and CI daemons agree whatever `JAVA_HOME` launches Gradle. 2.0.0-alpha.6 (2026-08-04) is built on Kotlin 2.4.10 and tested against JDK 25; its classpath needed no Kotlin pin. It is an alpha, so the catalog pins it exactly; it is a development tool that never ships in `vera.jar`; reverting it is one PR (catalog, root build script, `detekt.yml`, `check.sh`, `ci.yml`, daemon criteria). Type resolution is now full: every source set has its own type-resolved task (`detektMain`, `detektTest`, `detektItest`, `detektArchTest`), all four on `check`, and each takes classpath and `jvmTarget` 25 from its Kotlin compile task. A throwaway `fun firstLength(items: List<String>): Int = items.firstOrNull()!!.length` in `bootstrap` main passed `:bootstrap:detektMain` with `exit=0` on 1.23.8 (its compiler could not read Kotlin 2.3 stdlib metadata) and fails it on 2.0.0-alpha.6 with `exit=1`: `FirstLength.kt:3:45 Calling !! on a nullable type will throw a NullPointerException at runtime in case the value is null. It should be avoided. [UnsafeCallOnNullableType]`. `config.validation` rejected 13 properties of the 1.23 file (the `build` section, ten threshold keys, `UnusedPrivateMember`, `UnnecessaryAbstractClass`); Step 5 is the migrated file. Any finding fails the build through `failOnSeverity = Info` (2.x has no `maxIssues`): with `MagicNumber` set to `severity: warning` and `ForbiddenComment` to `info`, a probe holding one of each still fails with `exit=1`, and with the plugin default (`Error`) it would pass. The plugin's `detekt-baseline.xml` convention is cleared: a generated `detekt-baseline-main.xml` suppresses its finding without that line and is ignored with it. `UnsafeCallOnNullableType` excludes the test suites, because the team rule is "no `!!` in production code" and tests may use it: a `!!` probe fails `detektMain` and passes `detektTest`, `detektItest` and `detektArchTest` (before, the inherited default exempted `src/test` alone). The gate is tamper-evident: `DetektGateGuard`, a `doFirst` action on every detekt task, fails before any analysis when a module sets a baseline, `ignoreFailures`, a `failOnSeverity` other than Info, or `disableDefaultRuleSets`. Each override, tried in `platform/metadata`, fails `detektMain` with its own message, e.g. `detekt failOnSeverity must stay Info so any finding fails the build, not Error. Remove the override and fix the findings.` A module script can still switch a task off without touching those settings (`actions.clear()`, which drops the guard too, `enabled = false` or `setSource(files())` each exit 0), so Plan B's pre-push guard check 9 rejects any added `detekt` line in a `*.gradle.kts` other than the root one, and CODEOWNERS puts every build script in front of the owner. ArchUnit stays in place of Konsist (Task 6): Konsist 0.17.3 still depends on `kotlin-compiler-embeddable:2.0.21`. The Gradle 10 blocker left with 1.23 as well: 1.23.8 called `ReportingExtension.file(String)`, which Gradle 10 removes, and 2.0 uses `ReportingExtension.baseDirectory`.
 
 2.x limits name the largest allowed value, where 1.23 named the first failing one (`lines >= threshold` became `lines > allowedLines`), so every limit in Step 5 was calibrated by measurement: one throwaway probe just inside and one just outside each limit, run with 1.23.8 and the old file (`:platform:metadata:detekt`) and with 2.0.0-alpha.6 and Step 5 (`:platform:metadata:detektMain`). Both versions gave the same result for every probe: the inside set `exit=0` with no findings, the outside set `exit=1` with exactly one finding per probe, all from the target rule.
 
@@ -889,10 +897,12 @@ rm -f "$REPORT"
 mkdir -p "$(dirname "$LOG")"
 # detektMain fails here by design; its report, not its exit code, is what gets compared.
 "$ROOT/gradlew" -p "$ROOT" --console=plain -q :platform:metadata:detektMain >"$LOG" 2>&1
-# No report means Gradle stopped before detekt analysed anything (e.g. a compile error), which
-# says nothing about the limits.
+# No report means nothing was analysed: either detekt rejected the config, which detekt.yml must
+# fix, or Gradle failed earlier (e.g. a compile error), which says nothing about the limits.
 if [ ! -f "$REPORT" ]; then
   echo "RESULT calibrate exit=1 seconds=$((SECONDS - start))"
+  grep -q 'invalid config propert' "$LOG" &&
+    { echo "detekt rejected config/detekt/detekt.yml — fix the key named in build/detekt-calibrate.log" >&2; exit 1; }
   echo "Gradle failed before analysis — see build/detekt-calibrate.log; do not change detekt.yml" >&2
   exit 1
 fi
@@ -909,7 +919,7 @@ fi
 exit $code
 ```
 
-Result (executed 2026-10-01): `RESULT calibrate exit=0 seconds=1` (the report lists `## Issues (11)` over 22 Kotlin files). With `LongMethod.allowedLines` raised to 11: `RESULT calibrate exit=1` and the diff `< LongMethod LongMethodOutside.kt`. A SIGTERM while Gradle ran, with 17 of the 20 fixtures enabled, exited 130 and left all 20 `.disabled`. A throwaway fixture copy with a syntax error stops Gradle before analysis, and the script then prints only `Gradle failed before analysis — see build/detekt-calibrate.log; do not change detekt.yml` with `RESULT calibrate exit=1`; the log names `SyntaxErrorCopy.kt:14:17 Syntax error: Expecting '}'.`
+Result (executed 2026-10-01): `RESULT calibrate exit=0 seconds=1` (the report lists `## Issues (11)` over 22 Kotlin files). With `LongMethod.allowedLines` raised to 11: `RESULT calibrate exit=1` and the diff `< LongMethod LongMethodOutside.kt`. A SIGTERM while Gradle ran, with 17 of the 20 fixtures enabled, exited 130 and left all 20 `.disabled`. A throwaway fixture copy with a syntax error stops Gradle before analysis, and the script then prints only `Gradle failed before analysis — see build/detekt-calibrate.log; do not change detekt.yml` with `RESULT calibrate exit=1`; the log names `SyntaxErrorCopy.kt:14:17 Syntax error: Expecting '}'.` When detekt rejects the config itself, an unknown `LongMethod.threshold` key for instance, the script prints `detekt rejected config/detekt/detekt.yml — fix the key named in build/detekt-calibrate.log` instead, and the log names `Property 'complexity>LongMethod>threshold' is misspelled or does not exist`.
 
 - [ ] **Step 7: Commit**
 

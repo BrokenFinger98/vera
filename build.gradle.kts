@@ -151,7 +151,9 @@ configure(codeProjects) {
             sarif.required.set(false)
         }
         // Tamper evidence: a module override that weakens the gate fails before any analysis.
-        doFirst(DetektGateGuard(path, baseline, ignoreFailures, failOnSeverity))
+        doFirst(
+            DetektGateGuard(path, baseline, ignoreFailures, failOnSeverity, disableDefaultRuleSets)
+        )
     }
 
     // Coverage is aggregated at the root, so the per-module koverVerify must stay off `check`.
@@ -213,14 +215,16 @@ class SuiteSummaryListener(private val taskPath: String) : TestListener {
 
 /**
  * Fails a detekt task before it analyses anything when a module has weakened the gate: a baseline
- * that would hide findings, `ignoreFailures`, or a `failOnSeverity` other than Info. It holds only
- * the task path and providers, so it stays configuration-cache serialisable.
+ * that would hide findings, `ignoreFailures`, a `failOnSeverity` other than Info, or disabled
+ * default rule sets. It holds only the task path and providers, so it stays configuration-cache
+ * serialisable.
  */
 class DetektGateGuard(
     private val taskPath: String,
     private val baseline: Provider<RegularFile>,
     private val ignoreFailures: Provider<Boolean>,
     private val failOnSeverity: Provider<FailOnSeverity>,
+    private val disableDefaultRuleSets: Provider<Boolean>,
 ) : Action<Task> {
     override fun execute(task: Task) {
         check(!baseline.isPresent) {
@@ -234,6 +238,10 @@ class DetektGateGuard(
         check(failOnSeverity.orNull == FailOnSeverity.Info) {
             "$taskPath: detekt failOnSeverity must stay Info so any finding fails the build, not " +
                 "${failOnSeverity.orNull}. Remove the override and fix the findings."
+        }
+        check(!disableDefaultRuleSets.get()) {
+            "$taskPath: detekt default rule sets must stay enabled; " +
+                "remove the override and fix the findings."
         }
     }
 }

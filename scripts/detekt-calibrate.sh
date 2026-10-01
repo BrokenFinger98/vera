@@ -42,10 +42,12 @@ rm -f "$REPORT"
 mkdir -p "$(dirname "$LOG")"
 # detektMain fails here by design; its report, not its exit code, is what gets compared.
 "$ROOT/gradlew" -p "$ROOT" --console=plain -q :platform:metadata:detektMain >"$LOG" 2>&1
-# No report means Gradle stopped before detekt analysed anything (e.g. a compile error), which
-# says nothing about the limits.
+# No report means nothing was analysed: either detekt rejected the config, which detekt.yml must
+# fix, or Gradle failed earlier (e.g. a compile error), which says nothing about the limits.
 if [ ! -f "$REPORT" ]; then
   echo "RESULT calibrate exit=1 seconds=$((SECONDS - start))"
+  grep -q 'invalid config propert' "$LOG" &&
+    { echo "detekt rejected config/detekt/detekt.yml — fix the key named in build/detekt-calibrate.log" >&2; exit 1; }
   echo "Gradle failed before analysis — see build/detekt-calibrate.log; do not change detekt.yml" >&2
   exit 1
 fi
