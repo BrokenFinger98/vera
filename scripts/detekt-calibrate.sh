@@ -42,7 +42,14 @@ rm -f "$REPORT"
 mkdir -p "$(dirname "$LOG")"
 # detektMain fails here by design; its report, not its exit code, is what gets compared.
 "$ROOT/gradlew" -p "$ROOT" --console=plain -q :platform:metadata:detektMain >"$LOG" 2>&1
-actual="$([ -f "$REPORT" ] && awk '/^### /{rule=$3} /^\* (Error|Warning|Info): /{split($3, loc, ":"); n=split(loc[1], dirs, "/"); print rule, dirs[n]}' "$REPORT" | sort)"
+# No report means Gradle stopped before detekt analysed anything (e.g. a compile error), which
+# says nothing about the limits.
+if [ ! -f "$REPORT" ]; then
+  echo "RESULT calibrate exit=1 seconds=$((SECONDS - start))"
+  echo "Gradle failed before analysis — see build/detekt-calibrate.log; do not change detekt.yml" >&2
+  exit 1
+fi
+actual="$(awk '/^### /{rule=$3} /^\* (Error|Warning|Info): /{split($3, loc, ":"); n=split(loc[1], dirs, "/"); print rule, dirs[n]}' "$REPORT" | sort)"
 expected="$(printf '%s\n' "$EXPECTED" | sort)"
 code=0
 [ "$actual" = "$expected" ] || code=1

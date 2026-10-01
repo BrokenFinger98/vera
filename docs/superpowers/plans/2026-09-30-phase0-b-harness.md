@@ -1141,9 +1141,9 @@ if [ "$after" -lt "$before" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | gre
   violation "assertions decreased $before → $after" "Restore the assertions, or justify with a 'Test-Change: <reason>' trailer." assertion-decrease
 fi
 
-# 3. New suppression (@Suppress, @file:Suppress, @SuppressWarnings) in any Kotlin or Java source, tests included
-if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java' | grep -E '^\+.*@(file:)?Suppress(Warnings)?\(' >/dev/null; then
-  violation "new @Suppress/@file:Suppress/@SuppressWarnings under src/" "Fix the reported issue instead of suppressing it: a suppression hides findings in tests as much as in production code. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
+# 3. New suppression in any Kotlin or Java source, tests included: @Suppress, @file:Suppress, @SuppressWarnings, @[Suppress(...)]
+if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java' | grep -E '^\+.*Suppress(Warnings)?\(' >/dev/null; then
+  violation "new suppression under src/ (@Suppress, @file:Suppress, @SuppressWarnings or @[Suppress(...)])" "Fix the reported issue instead of suppressing it: a suppression hides findings in tests as much as in production code. The array form @[Suppress(...)] counts too: detekt honours it and ktfmt keeps it. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
 fi
 
 # 4. detekt baseline files (detekt 2.x names them per source set, e.g. detekt-baseline-main.xml)
@@ -1175,6 +1175,12 @@ if [ -n "$new_prod" ] && [ -z "$tests_touched" ]; then
   violation "new production Kotlin without tests: $(echo "$new_prod" | tr '\n' ' ')" \
     "Add the tests in this PR (DoD item 1). Every acceptance criterion maps to a test." missing-test-pair
 fi
+
+# 9. detekt touched outside the root build script: one module line (actions.clear(), enabled = false,
+#    disableDefaultRuleSets, setSource(files())) would switch the gate off and still exit 0.
+detekt_lines="$(git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*.gradle.kts' ':(exclude)build.gradle.kts' | grep -E '^\+[^+]' | grep -E '[Dd]etekt' || true)"
+[ -n "$detekt_lines" ] && violation "detekt configured outside the root build.gradle.kts: $(echo "$detekt_lines" | head -3 | tr '\n' ' ')" \
+  "detekt is configured only in the root build.gradle.kts (Plan A Task 3); move the change there in a harness ticket." detekt-outside-root
 
 if [ $fail -eq 0 ]; then echo "guards: pass ($RANGE)"; fi
 exit $fail
@@ -1281,6 +1287,10 @@ git commit -m "chore: add fail-closed constitution guards and pre-push wiki gate
 /scripts/                  @BrokenFinger98
 /docs/llm-wiki/wiki/decisions/  @BrokenFinger98
 /config/detekt/            @BrokenFinger98
+# Build scripts can switch a gate off in one line (guards.sh check 9 is the machine half).
+/build.gradle.kts          @BrokenFinger98
+*.gradle.kts               @BrokenFinger98
+/gradle/                   @BrokenFinger98
 ```
 
 `.github/PULL_REQUEST_TEMPLATE.md`:
