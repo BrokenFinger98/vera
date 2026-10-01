@@ -1782,7 +1782,7 @@ git commit -m "docs: add session state files, progress record and harness metric
 
 - [ ] **Step 1: Write the ADRs (same frontmatter pattern; bodies below)**
 
-Frontmatter for every file (adjust `tags`):
+Frontmatter for every file (adjust `tags`; D3, rewritten on 2026-10-01, also sets `updated: 2026-10-01`):
 
 ```yaml
 ---
@@ -1825,9 +1825,9 @@ The origin design chat proposed Java 21, Spring Boot 3.x, PostgreSQL 16, Redis. 
 ## Options considered
 Keep the chat's plan · raise to current LTS/GA line.
 ## Decision
-Java 25 LTS, Spring Boot 4.1.1 (Framework 7.0.9), Spring Modulith 2.1.1, Gradle 9.7.1, PostgreSQL 18, jOOQ 3.21.7 (BOM), Flyway 12.4 (BOM) + `flyway-database-postgresql`, Valkey 9, Kafka 4.3 (Phase 3.5), Testcontainers 2.0.5, Keycloak 26.7 (Phase 3), springdoc 3.1 (Phase 1).
+Java 25 LTS, Spring Boot 4.1.1 (Framework 7.0.9), Spring Modulith 2.1.1, Gradle 9.7.1, PostgreSQL 18, jOOQ 3.21.7 (BOM), Flyway 12.4 (BOM) + `flyway-database-postgresql`, Valkey 9, Kafka 4.2.1 (BOM, matching the compose image; Phase 3.5), Testcontainers 2.0.5, Keycloak 26.7 (Phase 3), springdoc 3.1 (Phase 1).
 ## Rationale
-Maven Central metadata checked for every pinned artifact; a previous work project of the owner completed the same Boot 4/JDK 25 upgrade on 2026-09-28, so the traps are documented.
+Maven Central metadata checked for every pinned artifact; the owner's own upgrade notes from 2026-09-28 cover the same Boot 4/JDK 25 upgrade, so the traps are documented.
 ## Accepted costs
 Boot 4 starter modularisation fails silently when a starter is missing; Testcontainers 2 renamed artifacts and packages; Valkey needs a service-connection label in compose.
 ## Outcome
@@ -1878,7 +1878,7 @@ The superpowers TDD skill is used only to choose verification scenarios.
 # D5 — Orca worktrees, two to three in parallel, one owned module per ticket
 
 ## Context
-Parallel agents collide on shared files; 2026 practice caps at 2–4 worktrees per developer before review becomes the bottleneck. The owner already uses Orca (used on two earlier projects).
+Parallel agents collide on shared files; 2026 practice caps at 4–8 worktrees per developer before review becomes the bottleneck. The owner already uses Orca (used on two earlier projects).
 ## Options considered
 Orca · Claude Code `--worktree`/`/batch` only · sequential only.
 ## Decision
@@ -1907,7 +1907,7 @@ One JDK for build, test and run keeps the toolchain simple; the sandbox contract
 ## Accepted costs
 Interpreter-only execution; `js-isolate-community` availability recorded by PoC 2.
 ## Outcome
-`platform/rule` `ScriptSandbox` with four passing tests.
+`platform/rule` `ScriptSandbox` with 17 passing tests (14 methods, the contract test parameterised four times).
 ```
 
 `2026-09-30-stop-hook-gate-trial.md`:
@@ -1916,7 +1916,7 @@ Interpreter-only execution; `js-isolate-community` availability recorded by PoC 
 # D7 — Stop-hook quality gate as a one-month trial
 
 ## Context
-The owner deleted a global stop-verify hook in 2026-07 after it never fired; a previous team project's stop gate produced false failures during concurrent Gradle runs. Anthropic's best practices name the Stop hook as the deterministic completion gate.
+The owner deleted a global stop-verify hook in 2026-07 after it never fired; an earlier project's stop gate produced false failures during concurrent Gradle runs. Anthropic's best practices name the Stop hook as the deterministic completion gate.
 ## Options considered
 No Stop gate · Stop gate always · trial with audit.
 ## Decision
