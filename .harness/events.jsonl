@@ -1,0 +1,2 @@
+{"ts":"2026-10-01T07:10:30Z","gate":"stop-gate","rule":"check.sh-failed","ticket":"","branch":"chore/phase-0-b-harness","detail":"BUILD FAILED in 678ms RESULT format exit=1 seconds=1"}
+{"ts":"2026-10-01T07:12:03Z","gate":"block-danger","rule":"git-discard-all","ticket":"","branch":"chore/phase-0-b-harness","detail":"echo git checkout -- ."}
