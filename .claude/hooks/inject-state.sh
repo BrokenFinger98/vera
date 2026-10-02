@@ -18,9 +18,10 @@ $2
 # 2. goal (personal, may be absent on a fresh clone)
 [ -f "$ROOT/.harness/state/goal.md" ] && add ".harness/state/goal.md" "$(cat "$ROOT/.harness/state/goal.md")"
 
-# 3. progress — only the part above the archive marker (constant-cost injection, spec §10)
+# 3. progress — only the part above the archive marker (constant-cost injection, spec §10). The marker is a line of
+#    its own, so prose that quotes it does not cut the injection short.
 if [ -f "$ROOT/.harness/state/progress.md" ]; then
-  add ".harness/state/progress.md (above <!-- ARCHIVE -->)" "$(awk '/<!-- ARCHIVE -->/{exit} {print}' "$ROOT/.harness/state/progress.md")"
+  add ".harness/state/progress.md (above <!-- ARCHIVE -->)" "$(awk '/^<!-- ARCHIVE -->[[:space:]]*$/{exit} {print}' "$ROOT/.harness/state/progress.md")"
 fi
 
 # 4. wiki index — Decisions section only
@@ -28,10 +29,13 @@ if [ -f "$ROOT/docs/llm-wiki/index.md" ]; then
   add "docs/llm-wiki/index.md (Decisions)" "$(awk '/^## Decisions/{f=1} /^## /&&!/^## Decisions/{f=0} f' "$ROOT/docs/llm-wiki/index.md")"
 fi
 
-# 5. gate events in the last 7 days — a nudge, not a report
-if [ -f "$ROOT/.harness/events.jsonl" ]; then
+# 5. gate events in the last 7 days — a nudge, not a report. The shared log (log-gate-event.sh) holds the firings of
+#    every worktree; a fresh clone has only the tracked copy. fromjson? skips a truncated line instead of losing the rest.
+events="${VERA_EVENTS_FILE:-$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/vera-events.jsonl}"
+[ -s "$events" ] || events="$ROOT/.harness/events.jsonl"
+if [ -f "$events" ]; then
   since="$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
-  summary="$(jq -r --arg since "$since" 'select(.ts >= $since) | "\(.gate)/\(.rule)"' "$ROOT/.harness/events.jsonl" 2>/dev/null | sort | uniq -c | sort -rn | head -5)"
+  summary="$(jq -rR --arg since "$since" 'fromjson? | objects | select(.ts >= $since) | "\(.gate)/\(.rule)"' "$events" 2>/dev/null | sort | uniq -c | sort -rn | head -5)"
   [ -n "$summary" ] && add "gate events, last 7 days (count gate/rule)" "$summary"
 fi
 

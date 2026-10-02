@@ -7,6 +7,6 @@ case "$FILE" in *.kt|*.kts) ;; *) exit 0 ;; esac
 [ -f "$FILE" ] || exit 0
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 case "$FILE" in "$ROOT"/*) ;; *) exit 0 ;; esac
-if pgrep -f 'GradleWrapperMain|gradlew' >/dev/null 2>&1; then exit 0; fi   # never fight a running build
+if pgrep -f "$ROOT/gradle/wrapper/gradle-wrapper.jar" >/dev/null 2>&1; then exit 0; fi   # never fight a build of this checkout
 "$ROOT/gradlew" -p "$ROOT" -q --console=plain spotlessApply -PspotlessIdeHook="$FILE" >/dev/null 2>&1 || true
 exit 0

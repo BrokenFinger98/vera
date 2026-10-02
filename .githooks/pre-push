@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pre-push — constitution guards (fail-closed) then the wiki gate (fail-open with 'Wiki-Skip: <reason>' trailer).
-# Installed by .claude/hooks/inject-state.sh via core.hooksPath. Both halves log to .harness/events.jsonl.
+# Installed by .claude/hooks/inject-state.sh via core.hooksPath. Both halves log through .claude/hooks/log-gate-event.sh.
 set -u
 ROOT="$(git rev-parse --show-toplevel)"
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"

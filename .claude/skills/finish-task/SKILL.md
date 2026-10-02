@@ -28,7 +28,7 @@ A lesson with `count: 3` is due for promotion (weekly routine opens the PR) — 
 Any decision made → ADR via /wiki-ingest (push gate checks). None → step 6 adds the `Wiki-Skip: no decision` trailer.
 
 ## 6. Commit the records
-Stage `.harness/state/progress.md`, `docs/llm-wiki/wiki/concepts/lessons.md`, `.harness/events.jsonl` and any ADR, then run /gated-commit; with no decision, put `Wiki-Skip: no decision` in that commit's body.
+Run `<root>/scripts/publish-events.sh` (copies new gate events from the shared, untracked log into `.harness/events.jsonl`; keep its `RESULT` line), then stage `.harness/state/progress.md`, `docs/llm-wiki/wiki/concepts/lessons.md`, `.harness/events.jsonl` and any ADR, then run /gated-commit; with no decision, put `Wiki-Skip: no decision` in that commit's body.
 
 ## 7. Hand off
 Run /pull-request.

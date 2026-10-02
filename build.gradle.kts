@@ -17,15 +17,16 @@ group = "com.brokenfinger.vera"
 version = "0.0.1-SNAPSHOT"
 
 // ---------- Formatting: one deterministic formatter for the whole repo ----------
+// .claude/** holds gitignored Claude Code worktrees (other sessions' checkouts): skip them.
 spotless {
     kotlin {
         target("**/*.kt")
-        targetExclude("**/build/**")
+        targetExclude("**/build/**", ".claude/**")
         ktfmt().kotlinlangStyle()
     }
     kotlinGradle {
         target("**/*.gradle.kts")
-        targetExclude("**/build/**")
+        targetExclude("**/build/**", ".claude/**")
         ktfmt().kotlinlangStyle()
     }
 }

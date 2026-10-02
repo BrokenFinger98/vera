@@ -36,7 +36,7 @@ vera/
 │   ├── skills/{ticket,gated-commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/SKILL.md
 │   └── workflows/{audit-consistency.js,release-review.js,deep-research.js}
 ├── .githooks/pre-push
-├── scripts/{guards.sh,test-hooks.sh}
+├── scripts/{guards.sh,test-hooks.sh,publish-events.sh}
 ├── .worktreeinclude
 └── .github/{CODEOWNERS,PULL_REQUEST_TEMPLATE.md,ISSUE_TEMPLATE/{task.yml,config.yml},workflows/{test-guard.yml,claude-review.yml,harness-improve.yml}}
 ```
@@ -375,33 +375,64 @@ git commit -m "docs: add coding conventions, glossary, context map and living-sp
 
 ### Task 3: Hooks and project settings
 
-Five hooks. `log-gate-event.sh` is called by the other hooks, by `.githooks/pre-push` and by `guards.sh`; it is the single writer of `.harness/events.jsonl`. `block-project-danger.sh` extends the global `block-danger.sh` with Vera-specific destructive commands and git-hook bypasses (deterministic and logged; permission deny rules cannot express "anywhere in the command").
+Five hooks. `log-gate-event.sh` is called by the other hooks, by `.githooks/pre-push` and by `guards.sh`; it is the single writer of the shared gate-event log `<git common dir>/vera-events.jsonl` (untracked, one file for the main checkout and every worktree, so a firing never leaves a tree dirty), and `scripts/publish-events.sh` copies new lines into the tracked `.harness/events.jsonl` when `/finish-task` commits the records. `block-project-danger.sh` extends the global `block-danger.sh` with Vera-specific destructive commands and git-hook bypasses (deterministic and logged; permission deny rules cannot express "anywhere in the command").
 
 **Files:**
-- Create: `.claude/hooks/log-gate-event.sh`, `.claude/hooks/inject-state.sh`, `.claude/hooks/stop-gate.sh`, `.claude/hooks/format.sh`, `.claude/hooks/block-project-danger.sh`, `.claude/settings.json`, `scripts/test-hooks.sh`, `.worktreeinclude`
+- Create: `.claude/hooks/log-gate-event.sh`, `scripts/publish-events.sh`, `.claude/hooks/inject-state.sh`, `.claude/hooks/stop-gate.sh`, `.claude/hooks/format.sh`, `.claude/hooks/block-project-danger.sh`, `.claude/settings.json`, `scripts/test-hooks.sh`, `.worktreeinclude`
 
-- [ ] **Step 1: Write `log-gate-event.sh`**
+- [ ] **Step 1: Write `log-gate-event.sh` and `scripts/publish-events.sh`**
 
 ```bash
 #!/usr/bin/env bash
 # log-gate-event.sh <gate> <rule> <detail...>
-# Appends one JSON line to .harness/events.jsonl. The only writer of that file (spec §10.1 Capture).
+# Appends one JSON line to the shared gate-event log <git common dir>/vera-events.jsonl: untracked and one file for the
+# main checkout and every worktree, so a firing never dirties a tree. $VERA_EVENTS_FILE overrides the path (tests).
+# The only writer of that log (spec §10.1 Capture); scripts/publish-events.sh copies it into .harness/events.jsonl.
 # gate  : block-danger | stop-gate | pre-push-guard | wiki-gate | critic | ci
 # rule  : short machine name, e.g. "deleted-test-file", "check.sh-failed", "force-push"
-# detail: free text (truncated to 300 chars)
+# detail: free text; NAME=value assignments are masked as NAME=***, then cut to 300 bytes; jq -a escapes non-ASCII
 set -uo pipefail
+export LC_ALL=C   # bytes, not characters: invalid UTF-8 in a detail must not stop tr, sed or cut
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ $# -ge 2 ] || exit 0
 gate="$1"; rule="$2"; shift 2
-detail="$(printf '%s' "$*" | tr '\n' ' ' | cut -c1-300)"
-branch="$(git -C "$ROOT" branch --show-current 2>/dev/null || echo unknown)"
+detail="$(printf '%s' "$*" | tr '\n' ' ' | sed -E 's/([A-Za-z_][A-Za-z0-9_]*)=[^[:space:]]+/\1=***/g' | cut -c1-300)"
+branch="$(git -C "$ROOT" branch --show-current 2>/dev/null)"; [ -n "$branch" ] || branch=detached
 ticket="$(printf '%s' "$branch" | sed -nE 's#^[a-z]+/([0-9]+)-.*#\1#p')"
-mkdir -p "$ROOT/.harness"
-jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg gate "$gate" --arg rule "$rule" \
+EVENTS="${VERA_EVENTS_FILE:-$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/vera-events.jsonl}"
+jq -acn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg gate "$gate" --arg rule "$rule" \
       --arg ticket "${ticket:-}" --arg branch "$branch" --arg detail "$detail" \
       '{ts:$ts, gate:$gate, rule:$rule, ticket:$ticket, branch:$branch, detail:$detail}' \
-      >> "$ROOT/.harness/events.jsonl" 2>/dev/null || true
+      >> "$EVENTS" 2>/dev/null || true
 exit 0
+```
+
+`scripts/publish-events.sh`:
+
+```bash
+#!/usr/bin/env bash
+# publish-events.sh — copies gate events from the shared, untracked log (<git common dir>/vera-events.jsonl, or
+# $VERA_EVENTS_FILE) into the tracked .harness/events.jsonl that the weekly harness-improve routine reads.
+# Appends the valid JSON lines the tracked file does not hold yet (exact match), in their original order, so a re-run
+# adds nothing. /finish-task runs it before staging the state files. Exit codes: 0 ok · 2 environment (not a checkout).
+set -uo pipefail
+ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)" || { echo "publish-events: not inside a git checkout" >&2; exit 2; }
+SHARED="${VERA_EVENTS_FILE:-$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)/vera-events.jsonl}"
+TRACKED="$ROOT/.harness/events.jsonl"
+added=0
+if [ -s "$SHARED" ]; then
+  mkdir -p "$ROOT/.harness" && touch "$TRACKED"
+  # A truncated line stays out of the tracked file. FILENAME, not NR==FNR: with an empty tracked file NR==FNR would
+  # also hold for the shared lines and skip them all.
+  new="$(jq -rR 'select(try (fromjson | type == "object") catch false)' "$SHARED" \
+    | awk -v tracked="$TRACKED" 'FILENAME == tracked {seen[$0]; next} !($0 in seen)' "$TRACKED" -)"
+  if [ -n "$new" ]; then
+    if [ -s "$TRACKED" ] && [ -n "$(tail -c1 "$TRACKED")" ]; then echo >> "$TRACKED"; fi   # never glue two events
+    printf '%s\n' "$new" >> "$TRACKED"
+    added="$(printf '%s\n' "$new" | wc -l | tr -d ' ')"
+  fi
+fi
+echo "RESULT publish-events exit=0 added=$added"
 ```
 
 - [ ] **Step 2: Write `inject-state.sh` (SessionStart)**
@@ -427,9 +458,10 @@ $2
 # 2. goal (personal, may be absent on a fresh clone)
 [ -f "$ROOT/.harness/state/goal.md" ] && add ".harness/state/goal.md" "$(cat "$ROOT/.harness/state/goal.md")"
 
-# 3. progress — only the part above the archive marker (constant-cost injection, spec §10)
+# 3. progress — only the part above the archive marker (constant-cost injection, spec §10). The marker is a line of
+#    its own, so prose that quotes it does not cut the injection short.
 if [ -f "$ROOT/.harness/state/progress.md" ]; then
-  add ".harness/state/progress.md (above <!-- ARCHIVE -->)" "$(awk '/<!-- ARCHIVE -->/{exit} {print}' "$ROOT/.harness/state/progress.md")"
+  add ".harness/state/progress.md (above <!-- ARCHIVE -->)" "$(awk '/^<!-- ARCHIVE -->[[:space:]]*$/{exit} {print}' "$ROOT/.harness/state/progress.md")"
 fi
 
 # 4. wiki index — Decisions section only
@@ -437,10 +469,13 @@ if [ -f "$ROOT/docs/llm-wiki/index.md" ]; then
   add "docs/llm-wiki/index.md (Decisions)" "$(awk '/^## Decisions/{f=1} /^## /&&!/^## Decisions/{f=0} f' "$ROOT/docs/llm-wiki/index.md")"
 fi
 
-# 5. gate events in the last 7 days — a nudge, not a report
-if [ -f "$ROOT/.harness/events.jsonl" ]; then
+# 5. gate events in the last 7 days — a nudge, not a report. The shared log (log-gate-event.sh) holds the firings of
+#    every worktree; a fresh clone has only the tracked copy. fromjson? skips a truncated line instead of losing the rest.
+events="${VERA_EVENTS_FILE:-$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/vera-events.jsonl}"
+[ -s "$events" ] || events="$ROOT/.harness/events.jsonl"
+if [ -f "$events" ]; then
   since="$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
-  summary="$(jq -r --arg since "$since" 'select(.ts >= $since) | "\(.gate)/\(.rule)"' "$ROOT/.harness/events.jsonl" 2>/dev/null | sort | uniq -c | sort -rn | head -5)"
+  summary="$(jq -rR --arg since "$since" 'fromjson? | objects | select(.ts >= $since) | "\(.gate)/\(.rule)"' "$events" 2>/dev/null | sort | uniq -c | sort -rn | head -5)"
   [ -n "$summary" ] && add "gate events, last 7 days (count gate/rule)" "$summary"
 fi
 
@@ -455,7 +490,7 @@ exit 0
 ```bash
 #!/usr/bin/env bash
 # Stop hook — refuse to end the turn while source changes fail the fast gate (spec §6 row 1, trial D7).
-# exit 2 + stderr = Claude must keep working. Loop guard: stop_hook_active. Concurrency guard: another Gradle client.
+# exit 2 + stderr = Claude must keep working. Loop guard: stop_hook_active. Concurrency guard: a Gradle build of this checkout.
 set -uo pipefail
 INPUT="$(cat)"
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
@@ -464,15 +499,19 @@ LOG="$ROOT/.claude/hooks/log-gate-event.sh"
 # Already blocked once this turn → let it stop (prevents infinite loops).
 if printf '%s' "$INPUT" | jq -e '.stop_hook_active == true' >/dev/null 2>&1; then exit 0; fi
 
-# Only care about source changes (tracked or untracked) in code directories.
-changed="$(git -C "$ROOT" status --porcelain -- platform apps ingestion bootstrap build.gradle.kts settings.gradle.kts gradle 2>/dev/null \
-  | grep -E '\.(kt|kts|java|sql|yaml|yml|toml)$' | head -50)"
+# Only care about source and build changes (tracked or untracked). -z names arrive unquoted, spaces included;
+# --untracked-files=all lists the files of a new package directory instead of one 'dir/' entry.
+changed="$(git -C "$ROOT" status --porcelain -z --untracked-files=all -- platform apps ingestion bootstrap \
+  build.gradle.kts settings.gradle.kts gradle config gradle.properties 2>/dev/null \
+  | tr '\0' '\n' | grep -E '\.(kt|kts|java|sql|yaml|yml|toml|properties)$' | head -50)"
 [ -z "$changed" ] && exit 0
 
-# A worker subagent's Gradle run would share build/ and produce false failures (wiki 2026-09-09 lesson).
-if pgrep -f 'GradleWrapperMain|gradlew' >/dev/null 2>&1; then
-  "$LOG" stop-gate skipped-concurrent-gradle "another Gradle client is running"
-  echo "stop-gate: another Gradle build is running; skipped. Re-run ./scripts/check.sh when it finishes." >&2
+# A Gradle build of this checkout would share build/ and produce false failures (wiki 2026-09-09 lesson). Gradle 9's
+# wrapper runs 'java ... -jar <root>/gradle/wrapper/gradle-wrapper.jar', so match that path: the bare word gradlew
+# also matched Claude Code's own shell wrapper, and other worktrees build into their own build/.
+if pgrep -f "$ROOT/gradle/wrapper/gradle-wrapper.jar" >/dev/null 2>&1; then
+  "$LOG" stop-gate skipped-concurrent-gradle "a Gradle build of this checkout is running"
+  echo "stop-gate: a Gradle build of this checkout is running; skipped. Re-run ./scripts/check.sh when it finishes." >&2
   exit 0
 fi
 
@@ -484,7 +523,7 @@ if [ $code -eq 0 ]; then exit 0; fi
 {
   echo "🛑 stop-gate: ./scripts/check.sh failed (exit $code). Fix before stopping. Last 40 lines (Gradle boilerplate is ~12, so the failing test name survives):"
   printf '%s\n' "$out" | tail -40
-  echo "Order: spotlessApply → build/reports/detekt/<source set>.md → test-results XML → archTest rule name. Never weaken a test or rule to pass."
+  echo "Order: spotlessApply → <module>/build/reports/detekt/<source set>.md → test-results XML → archTest rule name. Never weaken a test or rule to pass."
 } >&2
 exit 2
 ```
@@ -501,7 +540,7 @@ case "$FILE" in *.kt|*.kts) ;; *) exit 0 ;; esac
 [ -f "$FILE" ] || exit 0
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 case "$FILE" in "$ROOT"/*) ;; *) exit 0 ;; esac
-if pgrep -f 'GradleWrapperMain|gradlew' >/dev/null 2>&1; then exit 0; fi   # never fight a running build
+if pgrep -f "$ROOT/gradle/wrapper/gradle-wrapper.jar" >/dev/null 2>&1; then exit 0; fi   # never fight a build of this checkout
 "$ROOT/gradlew" -p "$ROOT" -q --console=plain spotlessApply -PspotlessIdeHook="$FILE" >/dev/null 2>&1 || true
 exit 0
 ```
@@ -617,41 +656,100 @@ exit 0
 ```bash
 #!/usr/bin/env bash
 # Exercises every project hook and gate script with real input. Run after any hook change. Exit 0 = all pass.
+# Probes log to a temporary VERA_EVENTS_FILE and fixtures are throwaway repositories under one temp directory, so
+# neither the real gate-event logs nor this working tree are touched.
 set -uo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 H="$ROOT/.claude/hooks"
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+export VERA_EVENTS_FILE="$T/events.jsonl"
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 fail=0
 ok()   { echo "PASS $1"; }
 bad()  { echo "FAIL $1"; fail=1; }
+last() { tail -1 "$VERA_EVENTS_FILE"; }
+# fixture <dir>: a throwaway repository holding this checkout's hooks and scripts in one commit on main = origin/main.
+fixture() {
+  git init -q -b main "$1" && mkdir -p "$1/.claude" && cp -R "$H" "$1/.claude/" && cp -R "$ROOT/scripts" "$ROOT/.githooks" "$1/" \
+    && git -C "$1" add -A && git -C "$1" commit -qm "base" && git -C "$1" update-ref refs/remotes/origin/main HEAD
+}
+# simulate <arg>: a 30 s background process whose command line holds <arg>; its pid lands in $sim.
+simulate() { perl -e 'sleep 30' "$1" & sim=$!; for _ in $(seq 50); do pgrep -f "$1" >/dev/null && return; sleep 0.1; done; }
 
-# log-gate-event writes one valid JSON line with ticket parsed from branch
-tmp="$(mktemp)"; cp "$ROOT/.harness/events.jsonl" "$tmp" 2>/dev/null || true
+# log-gate-event writes one valid JSON line, masks NAME=value assignments, and keeps the line ASCII (jq -a) even
+# for a detail with invalid UTF-8 (the lone byte \xff becomes U+FFFD)
 "$H/log-gate-event.sh" test-gate unit-test "hello world"
-tail -1 "$ROOT/.harness/events.jsonl" | jq -e '.gate=="test-gate" and .rule=="unit-test" and (.ts|length)==20' >/dev/null && ok "log-gate-event json" || bad "log-gate-event json"
-# remove the test line again
-if [ -s "$tmp" ]; then cp "$tmp" "$ROOT/.harness/events.jsonl"; else : > "$ROOT/.harness/events.jsonl"; fi; rm -f "$tmp"
+last | jq -e '.gate=="test-gate" and .rule=="unit-test" and (.ts|length)==20' >/dev/null && ok "log-gate-event json" || bad "log-gate-event json"
+"$H/log-gate-event.sh" test-gate mask "export API_KEY=abc123 then PASSWORD=x y"
+[ "$(last | jq -r .detail)" = "export API_KEY=*** then PASSWORD=*** y" ] && ok "log-gate-event masks NAME=value" || bad "log-gate-event masks NAME=value"
+"$H/log-gate-event.sh" test-gate non-ascii "$(printf 'caf\xc3\xa9 \xff')"
+last | jq -e '.detail == "café �"' >/dev/null && ! last | LC_ALL=C grep '[^ -~]' >/dev/null \
+  && ok "log-gate-event escapes non-ASCII and invalid UTF-8" || bad "log-gate-event escapes non-ASCII and invalid UTF-8"
 
-# inject-state emits hookSpecificOutput JSON
+# Without VERA_EVENTS_FILE every worktree logs to one untracked file in the git common dir; detached HEAD logs 'detached'
+F="$T/repo"; fixture "$F"
+git -C "$F" checkout -q --detach && git -C "$F" worktree add -q -b wt "$T/wt"
+env -u VERA_EVENTS_FILE "$F/.claude/hooks/log-gate-event.sh" test-gate shared "from the main checkout"
+env -u VERA_EVENTS_FILE "$T/wt/.claude/hooks/log-gate-event.sh" test-gate shared "from a worktree"
+jq -s -e 'map(.branch) == ["detached","wt"]' "$(git -C "$F" rev-parse --path-format=absolute --git-common-dir)/vera-events.jsonl" >/dev/null \
+  && [ -z "$(git -C "$F" status --porcelain)$(git -C "$T/wt" status --porcelain)" ] \
+  && ok "log-gate-event: one untracked log for every worktree" || bad "log-gate-event: one untracked log for every worktree"
+
+# publish-events appends the valid lines the tracked file lacks, in order; a re-run adds nothing
+printf '%s\n' '{"rule":"a"}' '{"rule":"b"}' '{"rule":"trunc' '{"rule":"c"}' > "$T/shared.jsonl"
+mkdir -p "$F/.harness" && printf '%s' '{"rule":"a"}' > "$F/.harness/events.jsonl"   # no final newline
+r1="$(VERA_EVENTS_FILE="$T/shared.jsonl" "$F/scripts/publish-events.sh")"; r2="$(VERA_EVENTS_FILE="$T/shared.jsonl" "$F/scripts/publish-events.sh")"
+[ "$r1 | $r2" = "RESULT publish-events exit=0 added=2 | RESULT publish-events exit=0 added=0" ] \
+  && [ "$(jq -r .rule "$F/.harness/events.jsonl" | tr '\n' ' ')" = "a b c " ] \
+  && ok "publish-events: new valid lines in order, idempotent" || bad "publish-events: new valid lines in order, idempotent"
+
+# inject-state emits hookSpecificOutput JSON with the Decisions of this checkout's wiki index
 out="$(echo '{}' | "$H/inject-state.sh")"
 printf '%s' "$out" | jq -e '.hookSpecificOutput.hookEventName=="SessionStart"' >/dev/null && ok "inject-state json" || bad "inject-state json"
-printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'Decisions' && ok "inject-state includes decisions" || bad "inject-state includes decisions"
+printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext' | grep 'Decisions' >/dev/null && ok "inject-state includes decisions" || bad "inject-state includes decisions"
+# ... stops at the marker line, not at prose quoting the marker, and counts events around a truncated line
+mkdir -p "$F/.harness/state"
+printf '%s\n' '# Progress' 'Move old entries below the <!-- ARCHIVE --> line.' '## current entry' '<!-- ARCHIVE -->' '## archived entry' > "$F/.harness/state/progress.md"
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s\n' "{\"ts\":\"$now\",\"gate\":\"g\",\"rule\":\"r\"}" '{"ts":"trunc' "{\"ts\":\"$now\",\"gate\":\"g\",\"rule\":\"r\"}" > "$T/inject.jsonl"
+ctx="$(echo '{}' | VERA_EVENTS_FILE="$T/inject.jsonl" "$F/.claude/hooks/inject-state.sh" | jq -r .hookSpecificOutput.additionalContext)"
+printf '%s\n' "$ctx" | grep -x '## current entry' >/dev/null && ! printf '%s\n' "$ctx" | grep -x '## archived entry' >/dev/null \
+  && ok "inject-state: a quoted marker does not cut progress short" || bad "inject-state: a quoted marker does not cut progress short"
+printf '%s\n' "$ctx" | grep -E '^ +2 g/r$' >/dev/null && ok "inject-state: a truncated event line hides nothing" || bad "inject-state: a truncated event line hides nothing"
+# ... and reads the tracked copy when the shared log does not exist yet (fresh clone)
+F2="$T/fresh"; fixture "$F2"; mkdir -p "$F2/.harness" && printf '%s\n' "{\"ts\":\"$now\",\"gate\":\"g\",\"rule\":\"tracked\"}" > "$F2/.harness/events.jsonl"
+echo '{}' | env -u VERA_EVENTS_FILE "$F2/.claude/hooks/inject-state.sh" | jq -r .hookSpecificOutput.additionalContext | grep -E '^ +1 g/tracked$' >/dev/null \
+  && ok "inject-state: fresh clone falls back to the tracked log" || bad "inject-state: fresh clone falls back to the tracked log"
 
 # stop-gate: loop guard exits 0 immediately
 echo '{"stop_hook_active": true}' | "$H/stop-gate.sh" >/dev/null 2>&1 && ok "stop-gate loop guard" || bad "stop-gate loop guard"
-# stop-gate: clean tree exits 0
-if [ -z "$(git -C "$ROOT" status --porcelain -- platform apps ingestion bootstrap)" ]; then
+# stop-gate: clean tree exits 0 (skipped when this checkout has source changes: the gate would run the real check.sh)
+if [ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all -- platform apps ingestion bootstrap build.gradle.kts settings.gradle.kts gradle config gradle.properties)" ]; then
   echo '{"stop_hook_active": false}' | "$H/stop-gate.sh" >/dev/null 2>&1 && ok "stop-gate clean tree" || bad "stop-gate clean tree"
 else
   echo "SKIP stop-gate clean tree (working tree dirty)"
 fi
+# stop-gate in a fixture whose check.sh always fails: it sees a .kt file in a new package directory and a name with a
+# space, and skips only while this checkout's wrapper jar runs, not for a process that merely names gradlew
+G="$T/gate"; fixture "$G"; printf '#!/usr/bin/env bash\necho "RESULT format exit=1 seconds=0"\nexit 1\n' > "$G/scripts/check.sh"
+gate() { echo '{"stop_hook_active": false}' | "$G/.claude/hooks/stop-gate.sh" >/dev/null 2>&1; echo $?; }
+mkdir -p "$G/platform/m/src/main/kotlin/new/pkg" && : > "$G/platform/m/src/main/kotlin/new/pkg/New.kt"
+[ "$(gate)" = 2 ] && ok "stop-gate sees a .kt file in a new package directory" || bad "stop-gate sees a .kt file in a new package directory"
+rm -rf "$G/platform" && mkdir -p "$G/platform/a b" && : > "$G/platform/a b/C.kt"
+[ "$(gate)" = 2 ] && ok "stop-gate sees a file name with a space" || bad "stop-gate sees a file name with a space"
+simulate "$(git -C "$G" rev-parse --show-toplevel)/gradle/wrapper/gradle-wrapper.jar"   # physical path, as gradlew's pwd -P
+[ "$(gate)" = 0 ] && last | jq -e '.rule=="skipped-concurrent-gradle"' >/dev/null \
+  && ok "stop-gate skips while this checkout's wrapper jar runs" || bad "stop-gate skips while this checkout's wrapper jar runs"
+kill "$sim"; wait "$sim" 2>/dev/null
+simulate "gradlew GradleWrapperMain"
+[ "$(gate)" = 2 ] && ok "stop-gate ignores a process that only names gradlew" || bad "stop-gate ignores a process that only names gradlew"
+kill "$sim"; wait "$sim" 2>/dev/null
 
 # format: ignores non-Kotlin files and exits 0
 echo '{"tool_input":{"file_path":"'"$ROOT"'/README.md"}}' | "$H/format.sh" && ok "format ignores md" || bad "format ignores md"
 
 # block-project-danger: blocks the destructive and hook-bypass patterns (exit 2), passes normal commands (exit 0),
 # also behind git's global options ('git -C <path> ...', the form CLAUDE.md mandates).
-# Events written by these probes are discarded by restoring the backup (portable; macOS head has no negative -n).
-bak="$(mktemp)"; cp "$ROOT/.harness/events.jsonl" "$bak" 2>/dev/null || : > "$bak"
 for c in "./gradlew flywayClean" "docker compose down -v" "psql -c 'drop schema vera cascade'" "git checkout -- ." "git push --force origin main" \
          "git push --no-verify origin main" "git config core.hooksPath /dev/null" "git config --unset core.hooksPath" "git -c core.hooksPath=/dev/null push origin main" \
          "git -C $ROOT checkout -- ." "git -C $ROOT restore ." "git -C $ROOT push --force origin x" "git -C $ROOT push -f origin x" \
@@ -672,7 +770,6 @@ done
 long="git push --force origin x"$'\n'"$(seq -f 'echo padding line %g' 1 8000)"
 jq -cn --arg c "$long" '{tool_input:{command:$c}}' | "$H/block-project-danger.sh" >/dev/null 2>&1
 [ $? -eq 2 ] && ok "block-project-danger blocks: force push on line 1 of a >100 KB command" || bad "block-project-danger blocks: force push on line 1 of a >100 KB command"
-cp "$bak" "$ROOT/.harness/events.jsonl"; rm -f "$bak"
 
 # guards: current HEAD against itself must pass
 "$ROOT/scripts/guards.sh" HEAD HEAD >/dev/null 2>&1 && ok "guards no-op range" || bad "guards no-op range"
@@ -683,7 +780,7 @@ exit $fail
 - [ ] **Step 8: Make executable and run the hook tests (guards.sh comes in Task 7; run again then)**
 
 ```bash
-chmod +x /Users/yu-sun00/Desktop/vera/.claude/hooks/*.sh /Users/yu-sun00/Desktop/vera/scripts/test-hooks.sh
+chmod +x /Users/yu-sun00/Desktop/vera/.claude/hooks/*.sh /Users/yu-sun00/Desktop/vera/scripts/test-hooks.sh /Users/yu-sun00/Desktop/vera/scripts/publish-events.sh
 mkdir -p /Users/yu-sun00/Desktop/vera/.harness && : > /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
 /Users/yu-sun00/Desktop/vera/scripts/test-hooks.sh; echo exit=$?
 ```
@@ -693,7 +790,7 @@ Expected: `PASS` for every line except `guards no-op range` (FAIL until Task 7) 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add .claude/settings.json .claude/hooks scripts/test-hooks.sh .worktreeinclude .harness/events.jsonl
+git add .claude/settings.json .claude/hooks scripts/test-hooks.sh scripts/publish-events.sh .worktreeinclude .harness/events.jsonl
 git commit -m "chore: add project hooks (state injection, stop gate, formatter, gate-event log) and settings"
 ```
 
@@ -980,7 +1077,7 @@ A lesson with `count: 3` is due for promotion (weekly routine opens the PR) — 
 Any decision made → ADR via /wiki-ingest (push gate checks). None → step 6 adds the `Wiki-Skip: no decision` trailer.
 
 ## 6. Commit the records
-Stage `.harness/state/progress.md`, `docs/llm-wiki/wiki/concepts/lessons.md`, `.harness/events.jsonl` and any ADR, then run /gated-commit; with no decision, put `Wiki-Skip: no decision` in that commit's body.
+Run `<root>/scripts/publish-events.sh` (copies new gate events from the shared, untracked log into `.harness/events.jsonl`; keep its `RESULT` line), then stage `.harness/state/progress.md`, `docs/llm-wiki/wiki/concepts/lessons.md`, `.harness/events.jsonl` and any ADR, then run /gated-commit; with no decision, put `Wiki-Skip: no decision` in that commit's body.
 
 ## 7. Hand off
 Run /pull-request.
@@ -1277,7 +1374,7 @@ exit $fail
 ```bash
 #!/usr/bin/env bash
 # pre-push — constitution guards (fail-closed) then the wiki gate (fail-open with 'Wiki-Skip: <reason>' trailer).
-# Installed by .claude/hooks/inject-state.sh via core.hooksPath. Both halves log to .harness/events.jsonl.
+# Installed by .claude/hooks/inject-state.sh via core.hooksPath. Both halves log through .claude/hooks/log-gate-event.sh.
 set -u
 ROOT="$(git rev-parse --show-toplevel)"
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
