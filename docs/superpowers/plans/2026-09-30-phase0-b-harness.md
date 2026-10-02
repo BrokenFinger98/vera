@@ -1816,7 +1816,7 @@ git commit -m "feat: add the three saved fan-out workflows (audit, release revie
 - #<n> <title>
 - EARS:
   - WHEN … THE SYSTEM SHALL …
-- Verify: ./scripts/check.sh · ./scripts/itest.sh :<module>
+- Verify: ./scripts/check.sh · ./scripts/itest.sh
 
 ## Owner's standing instructions
 - <things the agent must never re-ask>
@@ -1840,35 +1840,51 @@ Phase 0 (environment and harness) is complete when the first metadata-engine tic
   - WHEN a valid TableName and at least one FieldDefinition are submitted THE SYSTEM SHALL create the physical table and the catalog rows atomically
   - WHEN the physical DDL fails THE SYSTEM SHALL leave no catalog row behind
   - WHEN a TableName already exists THE SYSTEM SHALL reject with a conflict error and change nothing
-- Verify: ./scripts/check.sh · ./scripts/itest.sh :platform:metadata
+- Verify: ./scripts/check.sh · ./scripts/itest.sh (the Phase 1 design interview decides where module-level Spring tests live)
 
 ## Owner's standing instructions
 - The owner does not write code. Ask for decisions, not for implementations.
+- The owner approves three things: the ticket preview, the design review and the merge.
 - Never use employer code, designs, customer data or names.
 - English artifacts; Korean only in chat and README.ko.md.
 ```
 
-- [ ] **Step 2: Write `progress.md` with the Phase 0 record (fill the evidence from `git log` and the RESULT lines captured in Plan 0-A Task 12 Step 5)**
+`goal.md` is written but never committed: `git -C /Users/yu-sun00/Desktop/vera check-ignore .harness/state/goal.md` prints the path and exits 0. The Verify lines name no module because Spring context tests live in `:bootstrap` until Phase 1 decides a per-module test harness (CLAUDE.md, Quality gate).
+
+- [ ] **Step 2: Write `progress.md` with the Phase 0 record (evidence from Plan 0-A, `gh` and the job logs of the green CI run on main; the 0-B entry stays 🚧 until the Task 13 acceptance run)**
 
 ```markdown
 # Progress
 
-Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected into every session; move old entries below it.
+Entries start with the date. Everything above the archive marker (the HTML comment on the last line) is injected into every session; move old entries below it.
 
 ## [2026-09-30] Phase 0-A — repository, toolchain, PoCs ✅
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-a-repo-and-build.md`
-- Gradle 9.7.1 · Kotlin 2.3.21 · Boot 4.1.1 · Modulith 2.1.1 · PG 18 Testcontainers · detekt/ktfmt/ArchUnit/Kover
-- Evidence: `RESULT check exit=0` · `RESULT itest exit=0` · CI run green (paste run URL)
-- PoC 1 transactional DDL: pass · PoC 2 GraalJS sandbox: pass (js-isolate-community: <200|404>) · PoC 3 detekt/ArchUnit on Kotlin 2.3: <pass|finding> · PoC 4 kotlin-lsp: <pass|fallback>
+- Initial commit `295ffd1` (bootstrap pushed straight to main before the PR flow; never squashed, so the hash stays valid)
+- Gradle 9.7.1 · Kotlin 2.3.21 · Boot 4.1.1 · Modulith 2.1.1 · PG 18 Testcontainers · detekt 2.0.0-alpha.6 / ktfmt / ArchUnit / Kover
+- Evidence (CI run on main @ 3dd682d, check, itest, coverage and build all green: https://github.com/BrokenFinger98/vera/actions/runs/36801975950): `RESULT check exit=0 seconds=53` · `RESULT itest exit=0 seconds=71` · 37 unit, 5 archTest and 4 itest tests, 0 failed
+- PoC 1 transactional DDL: pass (a rolled-back CREATE TABLE leaves no table, a committed one is visible)
+- PoC 2 GraalJS sandbox: pass (js-isolate-community: 200; host access, IO, statement limit and wall clock enforced; no per-script heap cap on the stock JDK)
+- PoC 3 detekt/ArchUnit on Kotlin 2.3: finding, resolved — detekt 1.23.8 (Kotlin 2.0.21 compiler) crashed on JDK 25 and could not read Kotlin 2.3 metadata, so PR #3 moved to 2.0.0-alpha.6 (same 12 findings on the smoke sample); Konsist 0.17.3 has the same compiler, so ArchUnit 1.5.1 is used
+- PoC 4 kotlin-lsp: pass 2026-10-01 (first attempt blocked by outdated Command Line Tools; the plugin loads the server only at session start, so restart the session after installing it)
+- PR #1 (merged 2026-09-30T14:12Z) `test: give size-handling sandbox tests a CI-safe time budget` — the bootstrap push had failed CI: two sandbox tests hit the 2 s wall clock on `ubuntu-latest`
+- PR #2 (merged 2026-09-30T23:34Z) `docs: record PoC 4 (Kotlin LSP) as passing`
+- PR #3 (merged 2026-10-01T01:37Z) `build: migrate to detekt 2.0.0-alpha.6 and run the Gradle daemon on JDK 25`
 
-## [2026-09-30] Phase 0-B — harness, gates, wiki, self-improvement loop ✅
+## [2026-10-02] Phase 0-B — harness, gates, wiki, self-improvement loop 🚧
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-b-harness.md`
-- CLAUDE.md (N lines) · 5 rules · 8 skills · 4 hooks · pre-push guards (first firings logged) · 4 workflows in CI · 3 saved fan-out workflows
+- Status: harness on PR #4 (this branch); acceptance run (Plan B Task 13) pending
+- CLAUDE.md (100 lines) · 5 rules · 8 skills · 4 hooks + the `log-gate-event.sh` writer · pre-push guards (9 checks + wiki gate; first firings logged: `.harness/events.jsonl` has 4 lines — stop-gate 1, block-danger 1, pre-push-guard 2 from the negative probe) · CI workflows: `ci.yml` only
+- Pending: GitHub templates and the `test-guard`, `claude-review` and `harness-improve` workflows (Task 8) · 3 saved fan-out workflows (Task 9)
 - ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
-- Next: Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md)
+- Next: Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md), after the acceptance run
 
 <!-- ARCHIVE -->
 ```
+
+Evidence sources (2026-10-02): `RESULT` lines and test counts from `gh run view 36801975950 --repo BrokenFinger98/vera --log` (jobs `check` and `itest`); PR titles and merge times from `gh pr view <n> --repo BrokenFinger98/vera --json title,mergedAt,url`; the PoC 2 status from `curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/org/graalvm/polyglot/js-isolate-community/25.4.4.1.1/`; PoC 1 from the two `TransactionalDdlPocTest` cases in the `:bootstrap:itest` XML report after a forced re-run (`4 tests, 0 failed, 0 skipped`); PoC 3 and 4 from Plan 0-A Tasks 3 and 11. The 0-B counts come from `wc -l CLAUDE.md`, `ls .claude/rules .claude/skills .claude/hooks`, `jq '[.hooks[][] | .hooks[]] | length' .claude/settings.json`, the numbered checks in `scripts/guards.sh` and `jq -r .gate .harness/events.jsonl | sort | uniq -c`. `#4` is the next free number (`gh pr list --state all` ends at `#3` and `gh issue list --state all` is empty); confirm it when the PR is opened.
+
+The intro line does not spell the marker out: `inject-state.sh` stops at the first line that contains the marker string, so a literal mention above the real marker drops every entry from the injection (the earlier wording injected only the `# Progress` title). Keep it that way in every entry.
 
 - [ ] **Step 3: Write `.harness/metrics.md`**
 
@@ -1877,8 +1893,15 @@ Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected int
 
 | week | merged PRs | avg changed lines/PR | gate firings (rule:count) | critic blocking/PR | CI failure rate | regressions | time-to-green (median) |
 |---|---|---|---|---|---|---|---|
-| 2026-W40 | 0 | – | pre-push-guard:2 (negative probe) | – | – | 0 | – |
+| 2026-W40 (to 2026-10-02) | 3 | 558 | stop-gate/check.sh-failed:1, block-danger/git-discard-all:1, pre-push-guard/deleted-test-file:1, pre-push-guard/assertion-decrease:1 (the pre-push-guard pair is the negative probe) | – | 11% (1 of 9 completed runs; 1 cancelled run not counted) | 0 | – |
 ```
+
+Computed 2026-10-02 for ISO week 2026-W40 (Mon 2026-09-28 to Sun 2026-10-04), so far:
+- Merged PRs and changed lines: `gh pr list --repo BrokenFinger98/vera --state merged --search "merged:>=2026-09-28" --json number,additions,deletions` gives #1 (54 changed lines), #2 (3) and #3 (1618); 3 PRs, (54 + 3 + 1618) / 3 = 558.
+- Gate firings: `jq -r '"\(.gate)/\(.rule)"' .harness/events.jsonl | sort | uniq -c`, all four events fall in the week. The two `pre-push-guard` events come from the Task 7 negative probe (branch `tmp/guard-negative`).
+- CI failure rate: `gh run list --repo BrokenFinger98/vera --created ">=2026-09-28" --limit 200 --json conclusion,event,headBranch` gives 10 runs: 8 success, 1 failure (the bootstrap push, fixed by PR #1), 1 cancelled. The rate is failures over completed runs, 1 / (8 + 1).
+- Regressions: `gh issue list --repo BrokenFinger98/vera --state all` is empty, so no bug is filed against a merged ticket.
+- Critic blocking and time-to-green stay `–`: no critic event exists yet, and neither the spec nor the harness-improve prompt defines a time-to-green formula.
 
 - [ ] **Step 4: Commit**
 
@@ -1886,6 +1909,8 @@ Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected int
 git add .harness/state/goal.md.example .harness/state/progress.md .harness/metrics.md
 git commit -m "docs: add session state files, progress record and harness metrics table"
 ```
+
+`git status --porcelain` is empty afterwards: `goal.md` is ignored and was never staged.
 
 ---
 

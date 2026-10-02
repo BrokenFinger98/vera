@@ -1,0 +1,13 @@
+# Goal (personal — copy to goal.md; goal.md is gitignored)
+
+## Where we are
+<one paragraph: the current phase and what "done" means for it>
+
+## Current ticket
+- #<n> <title>
+- EARS:
+  - WHEN … THE SYSTEM SHALL …
+- Verify: ./scripts/check.sh · ./scripts/itest.sh
+
+## Owner's standing instructions
+- <things the agent must never re-ask>
