@@ -50,6 +50,11 @@ for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config 
          "git -C $ROOT reset -q" "git -C $ROOT reset --soft HEAD~1" "git clean -n" "git push origin main"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes: $c" || bad "block-project-danger passes: $c"
 done
+# A pattern on the first line of a long multi-line command is still blocked: under pipefail, a reader that exits early
+# (grep -q) would kill the writer with SIGPIPE once the input outgrows the pipe buffer, and the match would read as a miss.
+long="git push --force origin x"$'\n'"$(seq -f 'echo padding line %g' 1 8000)"
+jq -cn --arg c "$long" '{tool_input:{command:$c}}' | "$H/block-project-danger.sh" >/dev/null 2>&1
+[ $? -eq 2 ] && ok "block-project-danger blocks: force push on line 1 of a >100 KB command" || bad "block-project-danger blocks: force push on line 1 of a >100 KB command"
 cp "$bak" "$ROOT/.harness/events.jsonl"; rm -f "$bak"
 
 # guards: current HEAD against itself must pass

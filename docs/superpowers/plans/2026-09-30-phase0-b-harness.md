@@ -534,7 +534,9 @@ block() {
   echo "   $3" >&2
   exit 2
 }
-m() { printf '%s' "$NORM" | grep -qiE "$1"; }
+# grep reads all input (no -q): under pipefail an early exit kills printf with SIGPIPE on a long multi-line command,
+# and the match would read as a miss (fail-open).
+m() { printf '%s' "$NORM" | grep -iE "$1" >/dev/null; }
 # Values the command gives core.hooksPath ('git config ... core.hooksPath V', 'git -c core.hooksPath=V'; the key may be quoted).
 # A read gives none; the fd number of a redirect after a read ('core.hooksPath 2>/dev/null') is dropped.
 hooks_path_values() {
@@ -665,6 +667,11 @@ for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config 
          "git -C $ROOT reset -q" "git -C $ROOT reset --soft HEAD~1" "git clean -n" "git push origin main"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes: $c" || bad "block-project-danger passes: $c"
 done
+# A pattern on the first line of a long multi-line command is still blocked: under pipefail, a reader that exits early
+# (grep -q) would kill the writer with SIGPIPE once the input outgrows the pipe buffer, and the match would read as a miss.
+long="git push --force origin x"$'\n'"$(seq -f 'echo padding line %g' 1 8000)"
+jq -cn --arg c "$long" '{tool_input:{command:$c}}' | "$H/block-project-danger.sh" >/dev/null 2>&1
+[ $? -eq 2 ] && ok "block-project-danger blocks: force push on line 1 of a >100 KB command" || bad "block-project-danger blocks: force push on line 1 of a >100 KB command"
 cp "$bak" "$ROOT/.harness/events.jsonl"; rm -f "$bak"
 
 # guards: current HEAD against itself must pass
@@ -1179,6 +1186,7 @@ git commit -m "docs: add repo-local LLM wiki schema, index, counted lessons and 
 
 **Files:**
 - Create: `scripts/guards.sh`, `.githooks/pre-push`
+- Modify: `.gitattributes` (union merge for the two append-only shared files)
 
 - [ ] **Step 1: Write `scripts/guards.sh` (fail-closed constitution guards)**
 
@@ -1187,6 +1195,8 @@ git commit -m "docs: add repo-local LLM wiki schema, index, counted lessons and 
 # guards.sh [<base> <head>] — constitution guards over a commit range (default origin/main..HEAD). Fail-closed.
 # Exit 0 = pass. Each failure prints WHAT is wrong and HOW to fix it (the message is an instruction to the agent).
 set -uo pipefail
+# Check pipelines end in a reader that consumes all input (grep ... >/dev/null, never grep -q): under pipefail an early
+# exit kills the writer with SIGPIPE on a large diff or log, and a match would read as a miss.
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
 BASE="${1:-origin/main}"; HEAD_="${2:-HEAD}"
@@ -1198,16 +1208,19 @@ violation() { echo "✖ $1"; echo "  → $2"; "$LOG" pre-push-guard "$3" "$1"; f
 changed="$(git -C "$ROOT" diff --name-only "$BASE" "$HEAD_")"
 [ -z "$changed" ] && { echo "guards: empty range, pass"; exit 0; }
 
-# 1. Deleted test files
+# 1. Deleted test files without a Test-Change trailer (with the trailer the deletion is accepted and nothing is logged)
 deleted_tests="$(git -C "$ROOT" diff --diff-filter=D --name-only "$BASE" "$HEAD_" | grep -E 'src/(test|itest|archTest)/.*\.kt$' || true)"
-[ -n "$deleted_tests" ] && violation "test files deleted: $(echo "$deleted_tests" | tr '\n' ' ')" \
-  "Restore them. If a test is genuinely obsolete, explain in the commit body and add the trailer 'Test-Change: <reason>'." deleted-test-file
-if [ -n "$deleted_tests" ] && git -C "$ROOT" log --format=%B "$RANGE" | grep -q '^Test-Change:'; then fail=0; echo "  (Test-Change trailer present — deletion accepted)"; fi
+if [ -n "$deleted_tests" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | grep '^Test-Change:' >/dev/null; then
+  violation "test files deleted: $(echo "$deleted_tests" | tr '\n' ' ')" \
+    "Restore them. If a test is genuinely obsolete, explain in the commit body and add the trailer 'Test-Change: <reason>'." deleted-test-file
+elif [ -n "$deleted_tests" ]; then
+  echo "  (Test-Change trailer present — deletion accepted)"
+fi
 
 # 2. Net assertion decrease without Test-Change trailer
-count_asserts() { git -C "$ROOT" grep -c -E 'assertThat\(|assertThrows|assertThatThrownBy|assertTrue\(|assertFalse\(|assertEquals\(' "$1" -- '*/src/test/*' '*/src/itest/*' '*/src/archTest/*' 2>/dev/null | awk -F: '{s+=$2} END {print s+0}'; }
+count_asserts() { git -C "$ROOT" grep -c -E 'assertThat\(|assertThrows|assertThatThrownBy|assertTrue\(|assertFalse\(|assertEquals\(' "$1" -- '*/src/test/*' '*/src/itest/*' '*/src/archTest/*' 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}'; }
 before="$(count_asserts "$BASE")"; after="$(count_asserts "$HEAD_")"
-if [ "$after" -lt "$before" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | grep -q '^Test-Change:'; then
+if [ "$after" -lt "$before" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | grep '^Test-Change:' >/dev/null; then
   violation "assertions decreased $before → $after" "Restore the assertions, or justify with a 'Test-Change: <reason>' trailer." assertion-decrease
 fi
 
@@ -1217,7 +1230,7 @@ if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java' | grep -E
 fi
 
 # 4. detekt baseline files (detekt 2.x names them per source set, e.g. detekt-baseline-main.xml)
-if echo "$changed" | grep -qE 'detekt-baseline[^/]*\.xml$'; then
+if echo "$changed" | grep -E 'detekt-baseline[^/]*\.xml$' >/dev/null; then
   violation "detekt baseline file added" "Delete it. Baselines hide debt from the gates (CLAUDE.md Forbidden)." detekt-baseline
 fi
 
@@ -1226,15 +1239,18 @@ edited_mig="$(git -C "$ROOT" diff --diff-filter=M --name-only "$BASE" "$HEAD_" |
 [ -n "$edited_mig" ] && violation "merged migration edited: $(echo "$edited_mig" | tr '\n' ' ')" \
   "Revert the edit and add a new V<yyyyMMdd>_<hhmm>__<slug>.sql that fixes forward." migration-edited
 
-# 6. Hangul in committed artifacts (English-only, D1) — README.ko.md is the sole exception.
+# 6. Hangul added to committed artifacts (English-only, D1) — README.ko.md is the sole exception.
+#    Only lines the range adds count: a file that already holds Korean (Plan A embeds README.ko.md) stays editable.
+#    awk tags each added line with its file ('+++ <path>' header; -M keeps a pure rename free of added lines), grep matches.
 #    Portable byte-range match (macOS grep has no -P): UTF-8 lead bytes EA–ED cover U+A000–U+D7FF incl. Hangul syllables.
-hangul="$(echo "$changed" | grep -v -E '^README\.ko\.md$|^docs/research/' | while read -r f; do
-  [ -f "$ROOT/$f" ] && LC_ALL=C grep -l -E $'[\xEA-\xED][\x80-\xBF][\x80-\xBF]' "$ROOT/$f" 2>/dev/null; done || true)"
-[ -n "$hangul" ] && violation "Korean text in: $(echo "$hangul" | tr '\n' ' ')" \
+hangul="$(git -C "$ROOT" diff -M --no-prefix "$BASE" "$HEAD_" -- . ':(exclude)README.ko.md' ':(exclude)docs/research/' \
+  | LC_ALL=C awk '/^diff --git /{h=1} h && /^\+\+\+ /{f=substr($0, 5)} /^@@/{h=0} !h && /^\+/{print f "\t" $0}' \
+  | LC_ALL=C grep -E $'\t\\+.*[\xEA-\xED][\x80-\xBF][\x80-\xBF]' | cut -f1 | sort -u || true)"
+[ -n "$hangul" ] && violation "Korean text added in: $(echo "$hangul" | tr '\n' ' ')" \
   "Committed artifacts are English (ADR D1). Translate, or move the text to the owner's central wiki." non-english
 
 # 7. Secrets
-if git -C "$ROOT" diff "$BASE" "$HEAD_" | grep -E '^\+' | grep -qE 'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{36,}|xox[baprs]-[0-9A-Za-z-]{10,}'; then
+if git -C "$ROOT" diff "$BASE" "$HEAD_" | grep -E '^\+' | grep -E 'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{36,}|xox[baprs]-[0-9A-Za-z-]{10,}' >/dev/null; then
   violation "secret-like literal added" "Remove it, rotate the credential, load it from the environment." secret-literal
 fi
 
@@ -1271,11 +1287,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   [ -z "${local_ref:-}" ] && continue
   case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac          # tags/notes pass
   [ "$local_sha" = "$Z40" ] && continue                                 # deletions pass
-  if [ "$remote_sha" = "$Z40" ]; then
-    base="$(git merge-base origin/main "$local_sha" 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -1)"
-  else
-    base="$remote_sha"
-  fi
+  # Base = where the branch leaves main, on every push (never $remote_sha): after 'git merge origin/main'
+  # the old remote tip would pull other PRs' commits, trailers and deletions into the range.
+  base="$(git merge-base origin/main "$local_sha" 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -1)"
 
   # --- guards: fail-closed ---
   if [ -x "$ROOT/scripts/guards.sh" ]; then
@@ -1289,8 +1303,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   # --- wiki gate: fail-open ---
-  if ! git diff --quiet "$base" "$local_sha" -- docs/llm-wiki/ 2>/dev/null; then
-    continue                                                            # wiki changed → fine
+  # concepts/lessons.md does not count: /finish-task edits it on every branch, so it would pass every range.
+  if ! git diff --quiet "$base" "$local_sha" -- docs/llm-wiki/wiki/ ':(exclude)docs/llm-wiki/wiki/concepts/lessons.md' 2>/dev/null; then
+    continue                                                            # wiki page or ADR changed → fine
   fi
   if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:'; then
     "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:')"
@@ -1299,15 +1314,24 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # code-only ranges without decisions are common; block only when the range touched source or harness
   if git diff --name-only "$base" "$local_sha" | grep -qE '^(platform|apps|ingestion|bootstrap|\.claude|\.githooks|scripts|CLAUDE\.md)'; then
     "$LOG" wiki-gate blocked-no-wiki-change "$remote_ref"
-    echo "🛑 wiki gate: this range changes code or harness but docs/llm-wiki/ is untouched." >&2
-    echo "   Run /wiki-ingest (decisions → ADR, lessons → lessons.md), or add a commit trailer 'Wiki-Skip: <reason>' if truly nothing was decided." >&2
+    echo "🛑 wiki gate: this range changes code or harness but no file under docs/llm-wiki/wiki/ (concepts/lessons.md alone does not count)." >&2
+    echo "   Run /wiki-ingest (each decision → an ADR in docs/llm-wiki/wiki/decisions/), or add a commit trailer 'Wiki-Skip: <reason>' if truly nothing was decided." >&2
     exit 1
   fi
 done
 exit 0
 ```
 
-- [ ] **Step 3: Install, test the gates with real input, commit**
+- [ ] **Step 3: Union-merge the append-only shared files**
+
+Parallel PRs each append to `.harness/events.jsonl` and `.harness/state/progress.md`; git's built-in `union` merge driver keeps the lines of both sides instead of raising a conflict. Append to `.gitattributes` (from Plan A):
+
+```text
+.harness/events.jsonl merge=union
+.harness/state/progress.md merge=union
+```
+
+- [ ] **Step 4: Install, test the gates with real input, commit**
 
 ```bash
 chmod +x /Users/yu-sun00/Desktop/vera/scripts/guards.sh /Users/yu-sun00/Desktop/vera/.githooks/pre-push
@@ -1318,21 +1342,43 @@ git -C /Users/yu-sun00/Desktop/vera config core.hooksPath .githooks
 
 Expected: `guards: pass (...)`, `exit=0`; test-hooks all `PASS`, `exit=0`.
 
-Negative test (must fail, then undo):
+Negative test (must fail, then undo). It runs on the work branch with the new files still unstaged, so the probe commit holds only the deletion:
 
 ```bash
 git -C /Users/yu-sun00/Desktop/vera switch -c tmp/guard-negative
 git -C /Users/yu-sun00/Desktop/vera rm -q platform/metadata/src/test/kotlin/com/brokenfinger/vera/metadata/domain/TableNameTest.kt
-git -C /Users/yu-sun00/Desktop/vera commit -qm "test: negative guard probe"
-/Users/yu-sun00/Desktop/vera/scripts/guards.sh main HEAD; echo exit=$?
-git -C /Users/yu-sun00/Desktop/vera switch -q main && git -C /Users/yu-sun00/Desktop/vera branch -qD tmp/guard-negative
+printf 'test: negative guard probe\n' | git -C /Users/yu-sun00/Desktop/vera commit -q -F -
+/Users/yu-sun00/Desktop/vera/scripts/guards.sh chore/phase-0-b-harness HEAD; echo exit=$?
+git -C /Users/yu-sun00/Desktop/vera switch -q chore/phase-0-b-harness && git -C /Users/yu-sun00/Desktop/vera branch -qD tmp/guard-negative
 tail -2 /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
 ```
 
 Expected: two `✖` lines (`test files deleted`, `assertions decreased`), `exit=1`, and two `pre-push-guard` events in the log. Keep those two events: they are the first real evidence of a gate firing.
 
+The same deletion with a `Test-Change:` trailer is accepted and logs nothing:
+
 ```bash
-git add scripts/guards.sh .githooks/pre-push .harness/events.jsonl
+git -C /Users/yu-sun00/Desktop/vera switch -c tmp/guard-trailer
+git -C /Users/yu-sun00/Desktop/vera rm -q platform/metadata/src/test/kotlin/com/brokenfinger/vera/metadata/domain/TableNameTest.kt
+printf 'test: trailer guard probe\n\nTest-Change: probe\n' | git -C /Users/yu-sun00/Desktop/vera commit -q -F -
+wc -l < /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
+/Users/yu-sun00/Desktop/vera/scripts/guards.sh chore/phase-0-b-harness HEAD; echo exit=$?
+wc -l < /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
+git -C /Users/yu-sun00/Desktop/vera switch -q chore/phase-0-b-harness && git -C /Users/yu-sun00/Desktop/vera branch -qD tmp/guard-trailer
+```
+
+Expected: `(Test-Change trailer present — deletion accepted)`, `guards: pass (...)`, `exit=0`, the same line count twice.
+
+The push gate itself, run from the repository root with the stdin line git sends for the first push of this branch:
+
+```bash
+printf '%s %s %s %s\n' refs/heads/chore/phase-0-b-harness "$(git -C /Users/yu-sun00/Desktop/vera rev-parse HEAD)" refs/heads/chore/phase-0-b-harness 0000000000000000000000000000000000000000 | /Users/yu-sun00/Desktop/vera/.githooks/pre-push origin https://github.com/BrokenFinger98/vera.git; echo exit=$?
+```
+
+Expected: `guards: pass (...)`, `exit=0` (the branch adds ADRs under `docs/llm-wiki/wiki/decisions/`).
+
+```bash
+git add scripts/guards.sh .githooks/pre-push .gitattributes .harness/events.jsonl
 git commit -m "chore: add fail-closed constitution guards and pre-push wiki gate"
 ```
 

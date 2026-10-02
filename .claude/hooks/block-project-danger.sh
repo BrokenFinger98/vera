@@ -21,7 +21,9 @@ block() {
   echo "   $3" >&2
   exit 2
 }
-m() { printf '%s' "$NORM" | grep -qiE "$1"; }
+# grep reads all input (no -q): under pipefail an early exit kills printf with SIGPIPE on a long multi-line command,
+# and the match would read as a miss (fail-open).
+m() { printf '%s' "$NORM" | grep -iE "$1" >/dev/null; }
 # Values the command gives core.hooksPath ('git config ... core.hooksPath V', 'git -c core.hooksPath=V'; the key may be quoted).
 # A read gives none; the fd number of a redirect after a read ('core.hooksPath 2>/dev/null') is dropped.
 hooks_path_values() {

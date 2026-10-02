@@ -1,2 +1,4 @@
 {"ts":"2026-10-01T07:10:30Z","gate":"stop-gate","rule":"check.sh-failed","ticket":"","branch":"chore/phase-0-b-harness","detail":"BUILD FAILED in 678ms RESULT format exit=1 seconds=1"}
 {"ts":"2026-10-01T07:12:03Z","gate":"block-danger","rule":"git-discard-all","ticket":"","branch":"chore/phase-0-b-harness","detail":"echo git checkout -- ."}
+{"ts":"2026-10-02T01:06:14Z","gate":"pre-push-guard","rule":"deleted-test-file","ticket":"","branch":"tmp/guard-negative","detail":"test files deleted: platform/metadata/src/test/kotlin/com/brokenfinger/vera/metadata/domain/TableNameTest.kt "}
+{"ts":"2026-10-02T01:06:14Z","gate":"pre-push-guard","rule":"assertion-decrease","ticket":"","branch":"tmp/guard-negative","detail":"assertions decreased 44 → 32"}

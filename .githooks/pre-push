@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# pre-push — constitution guards (fail-closed) then the wiki gate (fail-open with 'Wiki-Skip: <reason>' trailer).
+# Installed by .claude/hooks/inject-state.sh via core.hooksPath. Both halves log to .harness/events.jsonl.
+set -u
+ROOT="$(git rev-parse --show-toplevel)"
+LOG="$ROOT/.claude/hooks/log-gate-event.sh"
+Z40="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "${local_ref:-}" ] && continue
+  case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac          # tags/notes pass
+  [ "$local_sha" = "$Z40" ] && continue                                 # deletions pass
+  # Base = where the branch leaves main, on every push (never $remote_sha): after 'git merge origin/main'
+  # the old remote tip would pull other PRs' commits, trailers and deletions into the range.
+  base="$(git merge-base origin/main "$local_sha" 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -1)"
+
+  # --- guards: fail-closed ---
+  if [ -x "$ROOT/scripts/guards.sh" ]; then
+    if ! "$ROOT/scripts/guards.sh" "$base" "$local_sha" >&2; then
+      echo "" >&2; echo "✖ constitution guards failed — nothing was pushed." >&2
+      exit 1
+    fi
+  else
+    echo "pre-push: scripts/guards.sh missing or not executable — refusing to push without guards" >&2
+    exit 1
+  fi
+
+  # --- wiki gate: fail-open ---
+  # concepts/lessons.md does not count: /finish-task edits it on every branch, so it would pass every range.
+  if ! git diff --quiet "$base" "$local_sha" -- docs/llm-wiki/wiki/ ':(exclude)docs/llm-wiki/wiki/concepts/lessons.md' 2>/dev/null; then
+    continue                                                            # wiki page or ADR changed → fine
+  fi
+  if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:'; then
+    "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:')"
+    continue
+  fi
+  # code-only ranges without decisions are common; block only when the range touched source or harness
+  if git diff --name-only "$base" "$local_sha" | grep -qE '^(platform|apps|ingestion|bootstrap|\.claude|\.githooks|scripts|CLAUDE\.md)'; then
+    "$LOG" wiki-gate blocked-no-wiki-change "$remote_ref"
+    echo "🛑 wiki gate: this range changes code or harness but no file under docs/llm-wiki/wiki/ (concepts/lessons.md alone does not count)." >&2
+    echo "   Run /wiki-ingest (each decision → an ADR in docs/llm-wiki/wiki/decisions/), or add a commit trailer 'Wiki-Skip: <reason>' if truly nothing was decided." >&2
+    exit 1
+  fi
+done
+exit 0
