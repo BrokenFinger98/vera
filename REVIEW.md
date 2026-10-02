@@ -6,7 +6,7 @@ immutable decision in `CLAUDE.md`**. Style is owned by ktfmt and detekt — neve
 ## Severity
 
 - **blocking** — wrong behaviour, data loss, security hole, module-boundary violation, test weakened/deleted
-  without a `Test-Change:` trailer and explanation, migration edited, immutable decision contradicted,
+  without a `Test-Change:` trailer and explanation on the commit that does it, migration edited, immutable decision contradicted,
   PR > 400 lines (`.harness/events.jsonl` excluded) without split rationale.
 - **major** — requirement from the ticket's acceptance criteria not covered by a test; missing rollback note.
 - **minor** — naming that contradicts `docs/domain/glossary.md`; missing ADR for an evident decision;
@@ -17,7 +17,10 @@ immutable decision in `CLAUDE.md`**. Style is owned by ktfmt and detekt — neve
 
 1. Every `WHEN … THE SYSTEM SHALL …` line in the linked issue has a test.
 2. `git diff --stat` shows only the ticket's owned module plus the always-allowed files in CLAUDE.md; no unrelated files.
-3. No assertion removed or weakened (compare `assertThat`/`assertThrows` counts).
+3. No test weakened in a way that keeps the counts: a new expected value, a looser matcher, a longer time budget, fewer
+   `@ValueSource` values, a skip marker moved to a wider scope or given another condition, a test moved where Gradle
+   does not build it. The push guard already refuses, per commit and per file, fewer assertions or test cases, a new
+   skip marker and a deleted or moved-out test without that commit's `Test-Change:` trailer (`scripts/guards.sh`).
 4. New tables/columns come with a new `V<timestamp>__*.sql`, never an edited one.
 5. Logs and error messages contain no PII, secrets or customer identifiers.
 
