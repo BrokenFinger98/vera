@@ -1,0 +1,15 @@
+# Harness and decisions need the owner's eyes even when an agent opens the PR.
+/CLAUDE.md                 @BrokenFinger98
+/REVIEW.md                 @BrokenFinger98
+/.claude/                  @BrokenFinger98
+/.githooks/                @BrokenFinger98
+/.github/                  @BrokenFinger98
+/scripts/                  @BrokenFinger98
+/docs/llm-wiki/wiki/decisions/  @BrokenFinger98
+/config/detekt/            @BrokenFinger98
+# Attributes decide how diffs and merges treat files (guards.sh diffs with --text; merge drivers still apply).
+/.gitattributes            @BrokenFinger98
+# Build scripts can switch a gate off in one line (guards.sh check 9 is the machine half).
+/build.gradle.kts          @BrokenFinger98
+*.gradle.kts               @BrokenFinger98
+/gradle/                   @BrokenFinger98

@@ -429,15 +429,16 @@ group = "com.brokenfinger.vera"
 version = "0.0.1-SNAPSHOT"
 
 // ---------- Formatting: one deterministic formatter for the whole repo ----------
+// .claude/** holds gitignored Claude Code worktrees (other sessions' checkouts): skip them.
 spotless {
     kotlin {
         target("**/*.kt")
-        targetExclude("**/build/**")
+        targetExclude("**/build/**", ".claude/**")
         ktfmt().kotlinlangStyle()
     }
     kotlinGradle {
         target("**/*.gradle.kts")
-        targetExclude("**/build/**")
+        targetExclude("**/build/**", ".claude/**")
         ktfmt().kotlinlangStyle()
     }
 }
@@ -1905,7 +1906,7 @@ run_gradle() {
 ```bash
 #!/usr/bin/env bash
 # Fast quality gate: formatting, detekt, unit tests, architecture tests. No Docker.
-# Callers: Stop hook (.claude/hooks/stop-gate.sh), pre-push gate, CI. Exit 0 means "safe to stop".
+# Callers: Stop hook (.claude/hooks/stop-gate.sh) and CI. Exit 0 means "safe to stop".
 # Exit codes: 0 ok · 1 Gradle failure · 2 environment (not a repo, not bash, bad arguments) · 3 Docker unavailable.
 . "$(dirname "$0")/lib.sh"
 [ $# -eq 0 ] || { echo "check.sh takes no arguments; use ./scripts/test.sh :module:path to scope tests." >&2; exit 2; }

@@ -4,7 +4,7 @@
 
 **Goal:** Wire the repository built by Plan 0-A into an agent-first harness: a short constitution (`CLAUDE.md`), path-scoped rules, project skills for the GitHub flow, hooks and git gates that enforce the rules deterministically, CI checks and branch protection, the repo-local LLM wiki with the nine Phase 0 ADRs, session-state files, and the closed self-improvement loop (event log → counted lessons → weekly proposal PRs → monthly prune PRs).
 
-**Architecture:** Instructions stay short and advisory (`CLAUDE.md` ≈ 100 lines, `.claude/rules/*.md` loaded by path); enforcement is deterministic and layered (PostToolUse format → PreToolUse deny → Stop gate → pre-push guards → CI → branch protection → human). Every gate firing is appended to `.harness/events.jsonl` by one script, `log-gate-event.sh`, which is the data source for the weekly `harness-improve` routine. Knowledge lives in `docs/llm-wiki/` (decisions, concepts, counted lessons); position lives in `.harness/state/`.
+**Architecture:** Instructions stay short and advisory (`CLAUDE.md` ≈ 100 lines, `.claude/rules/*.md` loaded by path); enforcement is deterministic and layered (PostToolUse format → PreToolUse deny → Stop gate → pre-push guards → CI → branch protection → human). Every gate firing is appended by one script, `log-gate-event.sh`, to a shared, untracked log in the git common dir (one file for the main checkout and every worktree); `scripts/publish-events.sh`, run by `/finish-task` and `/pull-request`, copies new lines into `.harness/events.jsonl`, the data source for the weekly `harness-improve` routine. Knowledge lives in `docs/llm-wiki/` (decisions, concepts, counted lessons); position lives in `.harness/state/`.
 
 **Tech Stack:** Bash (hooks, gates), `jq`, `gh` CLI (authenticated as BrokenFinger98), Claude Code 2.1.x hooks/skills/rules/workflows, GitHub Actions with `anthropics/claude-code-action@v1`, Markdown.
 
@@ -31,12 +31,12 @@ vera/
 ├── .harness/{state/{goal.md.example,progress.md},events.jsonl,metrics.md}
 ├── .claude/
 │   ├── settings.json
-│   ├── hooks/{inject-state.sh,stop-gate.sh,format.sh,log-gate-event.sh}
+│   ├── hooks/{inject-state.sh,stop-gate.sh,format.sh,log-gate-event.sh,block-project-danger.sh}
 │   ├── rules/{domain.md,persistence.md,web.md,test.md,migration.md}
-│   ├── skills/{issue,commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/SKILL.md
+│   ├── skills/{ticket,gated-commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/SKILL.md
 │   └── workflows/{audit-consistency.js,release-review.js,deep-research.js}
 ├── .githooks/pre-push
-├── scripts/{guards.sh,test-hooks.sh}
+├── scripts/{guards.sh,test-hooks.sh,publish-events.sh}
 ├── .worktreeinclude
 └── .github/{CODEOWNERS,PULL_REQUEST_TEMPLATE.md,ISSUE_TEMPLATE/{task.yml,config.yml},workflows/{test-guard.yml,claude-review.yml,harness-improve.yml}}
 ```
@@ -59,6 +59,7 @@ vera/
 ## Session start (the hook injects these; if missing, read them in this order)
 
 1. `.harness/state/goal.md` — current goal. If it says "awaiting decision", present options first.
+   It may be absent (fresh clone, CI); then proceed without it.
 2. `.harness/state/progress.md` — position (above the `<!-- ARCHIVE -->` marker).
 3. `docs/llm-wiki/index.md` — scan Decisions; if the request conflicts with an ADR, open it.
 
@@ -68,20 +69,21 @@ Coding conventions: `docs/development-rules.md`. Domain words: `docs/domain/glos
 ## Role
 
 You build Vera, a metadata-driven enterprise platform engine (ServiceNow-style) with an ITAM app
-on top. The owner writes specs, tickets and reviews; **you write all code, tests and docs**, and
-you prove completion with evidence (command output, `git diff --stat`), never with assertions.
+on top. The owner gives three approvals per ticket (preview, design review, merge), plus the spec of
+a large feature; **you write all code, tests and docs**, run the flow and prove completion with
+evidence (command output, `git diff --stat`), never with assertions.
 
 ## Immutable decisions (change = PR + ADR in `docs/llm-wiki/wiki/decisions/`)
 
 | Area | Decision |
 |---|---|
-| Stack | Kotlin 2.3.21 · Java 25 · Spring Boot 4.1 · Spring Modulith 2.1 · PostgreSQL 18 · jOOQ · Flyway |
-| Shape | Modular monolith. Modules = direct sub-packages of `com.brokenfinger.vera`; `apps → platform` only |
+| Stack | Kotlin 2.3 (BOM-managed) · Java 25 · Spring Boot 4.1 · Spring Modulith 2.1 · PostgreSQL 18 · jOOQ · Flyway |
+| Shape | Modular monolith. Modules = direct sub-packages of `com.brokenfinger.vera`; platform never depends on apps or ingestion; allowed edges = each module's `allowedDependencies` |
 | Storage | Fixed attributes as real columns, extension attributes as JSONB, transactional DDL for table creation |
 | Persistence | jOOQ only — no JPA, no QueryDSL (tables exist at runtime, not compile time) |
 | Scripts | GraalJS `js-community` sandbox: `HostAccess.NONE`, `IOAccess.NONE`, statement limit |
 | Tests | Real PostgreSQL via Testcontainers; H2 is forbidden. Three suites: `test`, `itest`, `archTest` |
-| Artifacts | English only (code, commits, ADRs, wiki, this file). `README.ko.md` is the sole Korean twin |
+| Artifacts | English only (code, commits, issues, PRs, ADRs, wiki, this file). `README.ko.md` is the sole Korean twin |
 
 ## Forbidden — reject on sight, explain, then rediscuss
 
@@ -89,7 +91,10 @@ you prove completion with evidence (command output, `git diff --stat`), never wi
 - Weakening or deleting a test, or adding `@Suppress`, to get green. Fix the code.
 - detekt baseline files, weakening detekt's `failOnSeverity = Info`, lowering Kover `minBound`.
 - `cd` inside a Bash command (deny rules on `.env*` make it prompt; use absolute paths, `git -C`).
-- Direct commits or pushes to `main`; work without an issue; PR > 400 changed lines without a split rationale.
+- Direct commits or pushes to `main`; PR > 400 changed lines (`.harness/events.jsonl` excluded) without a split rationale.
+- Work without an issue (exception: harness-improve proposal PRs on `harness/*` branches).
+- `--no-verify`, `git commit -n`, changing or unsetting `core.hooksPath` (CI re-runs the guards).
+- AI attribution in commits or PRs (`.claude/settings.json` turns Claude Code's off).
 - Employer code, designs, customer data or names. Public sources only.
 - Non-English text in committed files (except `README.ko.md`).
 - Swallowing exceptions, `printStackTrace`, `TODO`/`FIXME` comments (track in issues).
@@ -102,38 +107,52 @@ you prove completion with evidence (command output, `git diff --stat`), never wi
 ./scripts/itest.sh    # Testcontainers PostgreSQL 18
 ```
 
+Spring context tests live in `:bootstrap` until Phase 1 decides a per-module test harness: run
+`./scripts/itest.sh` for the whole repo (a module-scoped run that executes 0 tests proves nothing).
+
 Also: every new production `.kt` ships with a test in the same PR; `progress.md` is updated in
-the branch; decisions get an ADR (the push gate checks `docs/llm-wiki/` changed, escape hatch
-`Wiki-Skip: <reason>` trailer); test changes carry a `Test-Change: <reason>` trailer.
+the branch; decisions get an ADR (the push gate needs a change under `docs/llm-wiki/wiki/` other
+than `concepts/lessons.md`, or a `Wiki-Skip: <reason>` trailer). `Test-Change: <reason>` is only for
+deleting tests or reducing assertions, with the reason in the commit body; adding tests needs none.
+The `test-change` PR label is separate: it marks any change under `src/test|itest|archTest`.
 
 ## Development flow (mandatory)
 
 ```
-/issue → <type>/<n>-<slug> branch (worktree) → /start-task → work → /commit → /finish-task → /pull-request → squash merge
+/ticket → <type>/<n>-<slug> branch (worktree) → /start-task → work → /gated-commit → /finish-task → /pull-request → squash merge
 ```
 
+You run every step; the owner approves the ticket preview (/ticket), the design review and the merge (/pull-request).
 Explore → Plan → Implement → Verify. Skip the plan only when the diff fits one sentence.
 Large features: interview the owner, write the spec to `docs/superpowers/specs/`, execute in a fresh session.
-Parallel work: one owned module per ticket; shared files (root build files, migrations) only in solo tickets.
+Parallel work: one owned module per ticket (`harness` for gate, hook and workflow work) plus the
+always-allowed files (`.harness/state/progress.md`, `.harness/events.jsonl`, `docs/llm-wiki/**`,
+`docs/domain/glossary.md`, `docs/specs/<module>.md`); root build files and migrations only in solo tickets.
 
 ## Evidence format for completion claims
 
 1. Command run and its last line (`RESULT <name> exit=0 ...`).
-2. `git diff --stat main...HEAD`.
+2. `git diff --stat origin/main...HEAD`.
 3. Reviewer/critic findings and what you did with each.
 
 ## State file operations
 
 - Design decision → ADR file in `docs/llm-wiki/wiki/decisions/<date>-<slug>.md` (one per decision).
-- Step done → `progress.md` entry (date, ✅, commit hash, evidence).
+- Step done → `progress.md` entry (date, ✅, issue `#<n>`, evidence); never a commit hash (squash rewrites
+  them). Use the PR number only when a change has no issue.
 - New phase → rewrite `goal.md` completely; history lives in `progress.md`.
 - Conflict → **code beats state files** (they may be stale).
 - Something slowed you or a rule was missing → `/finish-task` records it in `docs/llm-wiki/wiki/concepts/lessons.md`.
 
 ## Bash habits that keep gates quiet
 
-Absolute paths. `git -C /Users/yu-sun00/Desktop/vera ...`. Scripts print `RESULT ... exit=N`; quote it.
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+Absolute paths under `<root>`: `git -C <root> ...`, `<root>/scripts/*.sh`.
+Scripts print `RESULT ... exit=N`; quote it. Commit messages and PR bodies go in files (`-F`,
+`--body-file`) because the danger hook screens the whole command line.
 Do not run Gradle while a worker subagent is running Gradle (shared `build/` → false failures).
+Kotlin LSP is available: prefer findReferences / workspaceSymbol / hover over grep for symbols; restart the
+session after installing or upgrading kotlin-lsp.
 ```
 
 - [ ] **Step 2: Create the `AGENTS.md` symlink and `REVIEW.md`**
@@ -145,30 +164,32 @@ ln -s CLAUDE.md /Users/yu-sun00/Desktop/vera/AGENTS.md
 `REVIEW.md`:
 
 ```markdown
-# Review contract for AI reviewers (Claude Code `/code-review`, `claude-review.yml`)
+# Review contract for AI reviewers (`claude-review.yml` and the critic in /finish-task)
 
 Report only findings that affect **correctness, the stated requirements, security, or an
 immutable decision in `CLAUDE.md`**. Style is owned by ktfmt and detekt — never comment on it.
 
 ## Severity
 
-- **blocking** — wrong behaviour, data loss, security hole, module-boundary violation, test weakened/deleted,
-  migration edited, immutable decision contradicted, PR > 400 lines without split rationale.
+- **blocking** — wrong behaviour, data loss, security hole, module-boundary violation, test weakened/deleted
+  without a `Test-Change:` trailer and explanation, migration edited, immutable decision contradicted,
+  PR > 400 lines (`.harness/events.jsonl` excluded) without split rationale.
 - **major** — requirement from the ticket's acceptance criteria not covered by a test; missing rollback note.
-- **minor** — naming that contradicts `docs/domain/glossary.md`; missing ADR for an evident decision.
+- **minor** — naming that contradicts `docs/domain/glossary.md`; missing ADR for an evident decision;
+  domain identifier or name not wrapped in a `value class`; `if … else` where an early return works.
 - Everything else: do not report.
 
 ## Must check on every PR
 
 1. Every `WHEN … THE SYSTEM SHALL …` line in the linked issue has a test.
-2. `git diff --stat` matches the ticket's owned module; no unrelated files.
+2. `git diff --stat` shows only the ticket's owned module plus the always-allowed files in CLAUDE.md; no unrelated files.
 3. No assertion removed or weakened (compare `assertThat`/`assertThrows` counts).
 4. New tables/columns come with a new `V<timestamp>__*.sql`, never an edited one.
 5. Logs and error messages contain no PII, secrets or customer identifiers.
 
 ## Skip
 
-`docs/llm-wiki/raw/**`, `*.md` outside `docs/superpowers/specs/`, generated PlantUML.
+`docs/llm-wiki/raw/**`, `docs/superpowers/plans/**`, generated PlantUML — read them for context, do not report on them.
 
 ## Output
 
@@ -204,7 +225,7 @@ where possible: detekt (`config/detekt/detekt.yml`), ArchUnit (`bootstrap/src/ar
 ## Core principles (team standard, encoded in detekt)
 
 1. One method = one job, ≤10 lines (`LongMethod allowedLines 10`).
-2. No `else`; early return (`NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
+2. No `if … else`; early return (`when` may use `else ->`; `NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
 3. Wrap primitives and collections in domain objects (`value class` with one property — review; no ArchUnit rule sees it).
 4. Behaviour methods over getters (a domain object does things; it does not expose fields for others to decide).
 5. Composition over inheritance (`AbstractClassCanBeConcreteClass`, `AbstractClassCanBeInterface`, `UnnecessaryInheritance`).
@@ -219,9 +240,11 @@ Effective Kotlin defaults: `val` over `var`, no `!!` in production code, `data c
 <module>/domain/        pure Kotlin: entities, value objects, domain services, exceptions. Imports nothing from Spring, jOOQ, Jakarta
 <module>/application/   use cases, transactions (@Transactional lives here), ports (interfaces) the domain needs
 <module>/internal/      adapters: jOOQ repositories, web controllers, Kafka consumers, caches. `internal` visibility
+<module>/internal/web/  controllers and their request/response DTOs (Spring MVC)
 ```
 
-Dependency direction: `internal → application → domain`. Other modules see only the module root package.
+Dependency direction: `internal → application → domain`. Other modules see only the module root package
+and named interfaces (`@NamedInterface`; today `metadata.domain`).
 
 ## Naming
 
@@ -233,8 +256,9 @@ Dependency direction: `internal → application → domain`. Other modules see o
 
 ## Persistence
 
-- jOOQ `DSLContext` from Spring; never a second one. Dynamic tables use `DSL.table(name)` / `DSL.field(name)` with
-  names validated by `TableName`/`FieldName` value objects first — never concatenate raw user input into SQL.
+- jOOQ `DSLContext` from Spring; never a second one. Dynamic tables use `DSL.table(DSL.name(...))` /
+  `DSL.field(DSL.name(...), type)` with names validated by `TableName`/`FieldName` value objects first — never
+  the `String` overloads (plain SQL, unquoted) and never raw user input in SQL.
 - DDL and the metadata row change in **one** transaction (PoC 1 proves PostgreSQL rolls DDL back).
 - Migrations: `bootstrap/src/main/resources/db/migration/V<yyyyMMdd>_<hhmm>__<slug>.sql`. Immutable once merged.
 
@@ -242,6 +266,7 @@ Dependency direction: `internal → application → domain`. Other modules see o
 
 - Unit (`src/test`): domain and application logic, no Spring context, AssertJ.
 - Integration (`src/itest`): `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`; real PostgreSQL 18.
+- Spring context tests (`@SpringBootTest`, `@WebMvcTest`) live in `:bootstrap` until Phase 1 decides a per-module harness.
 - Architecture (`src/archTest`): ArchUnit rules in `bootstrap` — `LayerRulesTest`, `NamingRulesTest`, `ImportScopeTest`.
 - Name tests as behaviour: `` `rejects names longer than 63 characters` ``. One behaviour per test.
 - Acceptance criteria from the ticket (EARS) map 1:1 to test names.
@@ -311,8 +336,12 @@ Words used in code, tickets and ADRs. If a word is missing, add it in the same P
 ```
 
 Arrows point from the module that depends to the module it depends on. `allowedDependencies` in each
-`package-info.java` mirrors this map; `ModularityTest` fails when they diverge. The control plane
-(instance provisioning) is a separate deployable and is out of scope until Phase 5.
+`package-info.java` mirrors this map, and both change in the same PR. `ModularityTest` fails when code
+crosses a boundary that `allowedDependencies` does not allow; it does not compare this document.
+The control plane (instance provisioning) is a separate deployable and is out of scope until Phase 5.
+
+`rule` also depends on `metadata` directly: `rule/package-info.java` allows `metadata` and `query`, and
+the diagram draws only the hop through `query`.
 ```
 
 `docs/specs/README.md`:
@@ -348,33 +377,74 @@ git commit -m "docs: add coding conventions, glossary, context map and living-sp
 
 ### Task 3: Hooks and project settings
 
-Five hooks. `log-gate-event.sh` is called by the other hooks, by `.githooks/pre-push` and by `guards.sh`; it is the single writer of `.harness/events.jsonl`. `block-project-danger.sh` extends the global `block-danger.sh` with Vera-specific destructive commands (deterministic and logged; permission deny rules cannot express "anywhere in the command").
+Five hooks. `log-gate-event.sh` is called by the other hooks, by `.githooks/pre-push` and by `guards.sh`; it is the single writer of the shared gate-event log `<git common dir>/vera-events.jsonl` (untracked, one file for the main checkout and every worktree, so a firing never leaves a tree dirty), and `scripts/publish-events.sh` copies new lines into the tracked `.harness/events.jsonl` when `/finish-task` commits the records. `block-project-danger.sh` extends the global `block-danger.sh` with Vera-specific destructive commands and git-hook bypasses (deterministic and logged; permission deny rules cannot express "anywhere in the command").
 
 **Files:**
-- Create: `.claude/hooks/log-gate-event.sh`, `.claude/hooks/inject-state.sh`, `.claude/hooks/stop-gate.sh`, `.claude/hooks/format.sh`, `.claude/hooks/block-project-danger.sh`, `.claude/settings.json`, `scripts/test-hooks.sh`, `.worktreeinclude`
+- Create: `.claude/hooks/log-gate-event.sh`, `scripts/publish-events.sh`, `.claude/hooks/inject-state.sh`, `.claude/hooks/stop-gate.sh`, `.claude/hooks/format.sh`, `.claude/hooks/block-project-danger.sh`, `.claude/settings.json`, `scripts/test-hooks.sh`, `.worktreeinclude`
 
-- [ ] **Step 1: Write `log-gate-event.sh`**
+- [ ] **Step 1: Write `log-gate-event.sh` and `scripts/publish-events.sh`**
 
 ```bash
 #!/usr/bin/env bash
 # log-gate-event.sh <gate> <rule> <detail...>
-# Appends one JSON line to .harness/events.jsonl. The only writer of that file (spec §10.1 Capture).
+# Appends one JSON line to the shared gate-event log <git common dir>/vera-events.jsonl: untracked and one file for the
+# main checkout and every worktree, so a firing never dirties a tree. $VERA_EVENTS_FILE overrides the path (tests).
+# The only writer of that log (spec §10.1 Capture); scripts/publish-events.sh copies it into .harness/events.jsonl.
 # gate  : block-danger | stop-gate | pre-push-guard | wiki-gate | critic | ci
 # rule  : short machine name, e.g. "deleted-test-file", "check.sh-failed", "force-push"
-# detail: free text (truncated to 300 chars)
+# detail: free text; $HOME becomes <home> and secret-looking assignments are masked (below), then it is cut to
+#         300 bytes; jq -a escapes non-ASCII
 set -uo pipefail
+export LC_ALL=C   # bytes, not characters: invalid UTF-8 in a detail must not stop tr, sed or cut
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ $# -ge 2 ] || exit 0
 gate="$1"; rule="$2"; shift 2
-detail="$(printf '%s' "$*" | tr '\n' ' ' | cut -c1-300)"
-branch="$(git -C "$ROOT" branch --show-current 2>/dev/null || echo unknown)"
+# Commands carry absolute paths (CLAUDE.md) and events end up in a public repository: $HOME becomes <home> first.
+raw="$*"
+case "${HOME:-}" in ""|/) ;; *) raw="${raw//"$HOME"/<home>}" ;; esac
+# A NAME=value or --long-option=value whose name holds one of these words, in any case (PGPASSWORD, GH_TOKEN,
+# aws_secret_access_key, --api-key), keeps only NAME=***; every other assignment (exit=1, --source=HEAD) stays readable.
+SENSITIVE='(pass|pwd|secret|token|key|auth|cred|session|cookie)'
+detail="$(printf '%s' "$raw" | tr '\n' ' ' \
+  | sed -E -e "s/(--[A-Za-z0-9-]*${SENSITIVE}[A-Za-z0-9-]*)=[^[:space:]]+/\1=***/gI" \
+           -e "s/([A-Za-z0-9_]*${SENSITIVE}[A-Za-z0-9_]*)=[^[:space:]]+/\1=***/gI" \
+  | cut -c1-300)"
+branch="$(git -C "$ROOT" branch --show-current 2>/dev/null)"; [ -n "$branch" ] || branch=detached
 ticket="$(printf '%s' "$branch" | sed -nE 's#^[a-z]+/([0-9]+)-.*#\1#p')"
-mkdir -p "$ROOT/.harness"
-jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg gate "$gate" --arg rule "$rule" \
+EVENTS="${VERA_EVENTS_FILE:-$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/vera-events.jsonl}"
+jq -acn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg gate "$gate" --arg rule "$rule" \
       --arg ticket "${ticket:-}" --arg branch "$branch" --arg detail "$detail" \
       '{ts:$ts, gate:$gate, rule:$rule, ticket:$ticket, branch:$branch, detail:$detail}' \
-      >> "$ROOT/.harness/events.jsonl" 2>/dev/null || true
+      >> "$EVENTS" 2>/dev/null || true
 exit 0
+```
+
+`scripts/publish-events.sh`:
+
+```bash
+#!/usr/bin/env bash
+# publish-events.sh — copies gate events from the shared, untracked log (<git common dir>/vera-events.jsonl, or
+# $VERA_EVENTS_FILE) into the tracked .harness/events.jsonl that the weekly harness-improve routine reads.
+# Appends the valid JSON lines the tracked file does not hold yet (exact match), in their original order, so a re-run
+# adds nothing. /finish-task runs it before staging the state files. Exit codes: 0 ok · 2 environment (not a checkout).
+set -uo pipefail
+ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)" || { echo "publish-events: not inside a git checkout" >&2; exit 2; }
+SHARED="${VERA_EVENTS_FILE:-$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)/vera-events.jsonl}"
+TRACKED="$ROOT/.harness/events.jsonl"
+added=0
+if [ -s "$SHARED" ]; then
+  mkdir -p "$ROOT/.harness" && touch "$TRACKED"
+  # A truncated line stays out of the tracked file. FILENAME, not NR==FNR: with an empty tracked file NR==FNR would
+  # also hold for the shared lines and skip them all.
+  new="$(jq -rR 'select(try (fromjson | type == "object") catch false)' "$SHARED" \
+    | awk -v tracked="$TRACKED" 'FILENAME == tracked {seen[$0]; next} !($0 in seen)' "$TRACKED" -)"
+  if [ -n "$new" ]; then
+    if [ -s "$TRACKED" ] && [ -n "$(tail -c1 "$TRACKED")" ]; then echo >> "$TRACKED"; fi   # never glue two events
+    printf '%s\n' "$new" >> "$TRACKED"
+    added="$(printf '%s\n' "$new" | wc -l | tr -d ' ')"
+  fi
+fi
+echo "RESULT publish-events exit=0 added=$added"
 ```
 
 - [ ] **Step 2: Write `inject-state.sh` (SessionStart)**
@@ -400,9 +470,10 @@ $2
 # 2. goal (personal, may be absent on a fresh clone)
 [ -f "$ROOT/.harness/state/goal.md" ] && add ".harness/state/goal.md" "$(cat "$ROOT/.harness/state/goal.md")"
 
-# 3. progress — only the part above the archive marker (constant-cost injection, spec §10)
+# 3. progress — only the part above the archive marker (constant-cost injection, spec §10). The marker is a line of
+#    its own, so prose that quotes it does not cut the injection short.
 if [ -f "$ROOT/.harness/state/progress.md" ]; then
-  add ".harness/state/progress.md (above <!-- ARCHIVE -->)" "$(awk '/<!-- ARCHIVE -->/{exit} {print}' "$ROOT/.harness/state/progress.md")"
+  add ".harness/state/progress.md (above <!-- ARCHIVE -->)" "$(awk '/^<!-- ARCHIVE -->[[:space:]]*$/{exit} {print}' "$ROOT/.harness/state/progress.md")"
 fi
 
 # 4. wiki index — Decisions section only
@@ -410,10 +481,13 @@ if [ -f "$ROOT/docs/llm-wiki/index.md" ]; then
   add "docs/llm-wiki/index.md (Decisions)" "$(awk '/^## Decisions/{f=1} /^## /&&!/^## Decisions/{f=0} f' "$ROOT/docs/llm-wiki/index.md")"
 fi
 
-# 5. gate events in the last 7 days — a nudge, not a report
-if [ -f "$ROOT/.harness/events.jsonl" ]; then
+# 5. gate events in the last 7 days — a nudge, not a report. The shared log (log-gate-event.sh) holds the firings of
+#    every worktree; a fresh clone has only the tracked copy. fromjson? skips a truncated line instead of losing the rest.
+events="${VERA_EVENTS_FILE:-$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/vera-events.jsonl}"
+[ -s "$events" ] || events="$ROOT/.harness/events.jsonl"
+if [ -f "$events" ]; then
   since="$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
-  summary="$(jq -r --arg since "$since" 'select(.ts >= $since) | "\(.gate)/\(.rule)"' "$ROOT/.harness/events.jsonl" 2>/dev/null | sort | uniq -c | sort -rn | head -5)"
+  summary="$(jq -rR --arg since "$since" 'fromjson? | objects | select(.ts >= $since) | "\(.gate)/\(.rule)"' "$events" 2>/dev/null | sort | uniq -c | sort -rn | head -5)"
   [ -n "$summary" ] && add "gate events, last 7 days (count gate/rule)" "$summary"
 fi
 
@@ -428,7 +502,7 @@ exit 0
 ```bash
 #!/usr/bin/env bash
 # Stop hook — refuse to end the turn while source changes fail the fast gate (spec §6 row 1, trial D7).
-# exit 2 + stderr = Claude must keep working. Loop guard: stop_hook_active. Concurrency guard: another Gradle client.
+# exit 2 + stderr = Claude must keep working. Loop guard: stop_hook_active. Concurrency guard: a Gradle build of this checkout.
 set -uo pipefail
 INPUT="$(cat)"
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
@@ -437,15 +511,19 @@ LOG="$ROOT/.claude/hooks/log-gate-event.sh"
 # Already blocked once this turn → let it stop (prevents infinite loops).
 if printf '%s' "$INPUT" | jq -e '.stop_hook_active == true' >/dev/null 2>&1; then exit 0; fi
 
-# Only care about source changes (tracked or untracked) in code directories.
-changed="$(git -C "$ROOT" status --porcelain -- platform apps ingestion bootstrap build.gradle.kts settings.gradle.kts gradle 2>/dev/null \
-  | grep -E '\.(kt|kts|java|sql|yaml|yml|toml)$' | head -50)"
+# Only care about source and build changes (tracked or untracked). -z names arrive unquoted, spaces included;
+# --untracked-files=all lists the files of a new package directory instead of one 'dir/' entry.
+changed="$(git -C "$ROOT" status --porcelain -z --untracked-files=all -- platform apps ingestion bootstrap \
+  build.gradle.kts settings.gradle.kts gradle config gradle.properties 2>/dev/null \
+  | tr '\0' '\n' | grep -E '\.(kt|kts|java|sql|yaml|yml|toml|properties)$' | head -50)"
 [ -z "$changed" ] && exit 0
 
-# A worker subagent's Gradle run would share build/ and produce false failures (wiki 2026-09-09 lesson).
-if pgrep -f 'GradleWrapperMain|gradlew' >/dev/null 2>&1; then
-  "$LOG" stop-gate skipped-concurrent-gradle "another Gradle client is running"
-  echo "stop-gate: another Gradle build is running; skipped. Re-run ./scripts/check.sh when it finishes." >&2
+# A Gradle build of this checkout would share build/ and produce false failures (wiki 2026-09-09 lesson). Gradle 9's
+# wrapper runs 'java ... -jar <root>/gradle/wrapper/gradle-wrapper.jar', so match that path: the bare word gradlew
+# also matched Claude Code's own shell wrapper, and other worktrees build into their own build/.
+if pgrep -f "$ROOT/gradle/wrapper/gradle-wrapper.jar" >/dev/null 2>&1; then
+  "$LOG" stop-gate skipped-concurrent-gradle "a Gradle build of this checkout is running"
+  echo "stop-gate: a Gradle build of this checkout is running; skipped. Re-run ./scripts/check.sh when it finishes." >&2
   exit 0
 fi
 
@@ -457,7 +535,7 @@ if [ $code -eq 0 ]; then exit 0; fi
 {
   echo "🛑 stop-gate: ./scripts/check.sh failed (exit $code). Fix before stopping. Last 40 lines (Gradle boilerplate is ~12, so the failing test name survives):"
   printf '%s\n' "$out" | tail -40
-  echo "Order: spotlessApply → build/reports/detekt/<source set>.md → test-results XML → archTest rule name. Never weaken a test or rule to pass."
+  echo "Order: spotlessApply → <module>/build/reports/detekt/<source set>.md → test-results XML → archTest rule name. Never weaken a test or rule to pass."
 } >&2
 exit 2
 ```
@@ -474,8 +552,8 @@ case "$FILE" in *.kt|*.kts) ;; *) exit 0 ;; esac
 [ -f "$FILE" ] || exit 0
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 case "$FILE" in "$ROOT"/*) ;; *) exit 0 ;; esac
-if pgrep -f 'GradleWrapperMain|gradlew' >/dev/null 2>&1; then exit 0; fi   # never fight a running build
-"$ROOT/gradlew" -q --console=plain spotlessApply -PspotlessIdeHook="$FILE" >/dev/null 2>&1 || true
+if pgrep -f "$ROOT/gradle/wrapper/gradle-wrapper.jar" >/dev/null 2>&1; then exit 0; fi   # never fight a build of this checkout
+"$ROOT/gradlew" -p "$ROOT" -q --console=plain spotlessApply -PspotlessIdeHook="$FILE" >/dev/null 2>&1 || true
 exit 0
 ```
 
@@ -485,13 +563,20 @@ exit 0
 
 ```bash
 #!/usr/bin/env bash
-# PreToolUse(Bash) — Vera-specific destructive commands, on top of the global block-danger.sh. exit 2 = blocked.
+# PreToolUse(Bash) — Vera-specific destructive commands and git-hook bypasses, on top of the global block-danger.sh. exit 2 = blocked.
 set -uo pipefail
 INPUT="$(cat)"
 CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
 [ -n "$CMD" ] || exit 0
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
+
+# The patterns below read NORM: the command with git's global options stripped ('git -C <path> push' → 'git push';
+# CLAUDE.md mandates -C) and quotes dropped. One option per pass, those taking a value first, until none is left.
+# hooks_path_values reads $CMD itself, because 'git -c core.hooksPath=...' is one of the stripped options.
+GIT_OPT_ARG="(-[Cc]|--(git-dir|work-tree|namespace|config-env|attr-source))[[:space:]]+(\"[^\"]*\"|'[^']*'|[^[:space:];&|]+)"
+NORM="$(printf '%s' "$CMD" | sed -E -e ':a' -e "s/(git)[[:space:]]+$GIT_OPT_ARG/\1/g" -e 'ta' \
+  -e 's/(git)[[:space:]]+-[^[:space:];&|]*/\1/g' -e 'ta' -e "s/[\"']//g")"
 
 block() {
   "$LOG" block-danger "$2" "$CMD"
@@ -500,13 +585,28 @@ block() {
   echo "   $3" >&2
   exit 2
 }
-m() { printf '%s' "$CMD" | grep -qiE "$1"; }
+# grep reads all input (no -q): under pipefail an early exit kills printf with SIGPIPE on a long multi-line command,
+# and the match would read as a miss (fail-open).
+m() { printf '%s' "$NORM" | grep -iE "$1" >/dev/null; }
+# Values the command gives core.hooksPath ('git config ... core.hooksPath V', 'git -c core.hooksPath=V'; the key may be quoted).
+# A read gives none; the fd number of a redirect after a read ('core.hooksPath 2>/dev/null') is dropped.
+hooks_path_values() {
+  printf '%s' "$CMD" | grep -oiE "config([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[\"']?core\.hookspath[\"']?[[:space:]]+[^[:space:];&|<>()]+|-c[[:space:]]+[\"']?core\.hookspath=[^[:space:];&|<>()]*" \
+    | sed -E "s/.*[=[:space:]]//; s/[\"']//g" | grep -vxE '[0-9]+'
+}
 
 m 'flyway(Clean|Repair)|flyway[[:space:]]+(clean|repair)' && block "Flyway clean/repair" flyway-clean "Migrations are immutable; fix forward with a new V<timestamp>__*.sql."
 m 'compose[[:space:]]+down.*(-v|--volumes)' && block "compose down with volumes" compose-down-volumes "Volumes hold the demo database; use 'docker compose down' without -v."
 m 'drop[[:space:]]+schema' && block "DROP SCHEMA" drop-schema "Schema changes go through Flyway migrations reviewed in a PR."
-m 'git[[:space:]]+(checkout|restore)[[:space:]]+(--[[:space:]]+)?\.([[:space:]]|$)' && block "discarding all working-tree changes" git-discard-all "Discard single files by path, never the whole tree."
-m 'git[[:space:]]+push.*(--force|-f([[:space:]]|$))' && block "force push" force-push "History is linear and protected; open a new commit instead."
+m 'git[[:space:]]+(checkout|restore)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(\./?|:/)([[:space:];&|]|$)' && block "discarding all working-tree changes" git-discard-all "Discard single files by path, never the whole tree; to unstage everything, use 'git reset -q'."
+# reset --hard and clean -f repeat global block-danger.sh rules, which need git next to the subcommand and so miss 'git -C <path>'.
+m 'git[[:space:]]+reset([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--hard([[:space:];&|]|$)' && block "git reset --hard" reset-hard "It drops uncommitted work; commit or stash it instead ('git reset -q' only unstages)."
+m 'git[[:space:]]+clean([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--force)([[:space:];&|]|$)' && block "git clean with --force" clean-force "It deletes untracked files for good; remove single paths instead, after a dry run with 'git clean -n'."
+# Force push: --force* (incl. --force-with-lease), a short-flag cluster with f (-f, -fu, -uf) or a +<refspec>.
+m 'git[[:space:]]+push([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(--force[^[:space:];&|]*|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:];&|]+)([[:space:];&|]|$)' && block "force push" force-push "History is linear and protected; open a new commit instead."
+m 'git[[:space:]].*--no-verify([^-[:alnum:]]|$)' && block "skipping git hooks with --no-verify" no-verify "The guards are fail-closed; fix the code instead of skipping them."
+m 'unset[^;&|]*core\.hookspath' && block "unsetting core.hooksPath" hooks-path "core.hooksPath installs the push gate; it stays .githooks."
+hooks_path_values | grep -vx '\.githooks' >/dev/null && block "core.hooksPath other than .githooks" hooks-path "core.hooksPath installs the push gate; only 'git config core.hooksPath .githooks' is allowed."
 exit 0
 ```
 
@@ -514,7 +614,7 @@ exit 0
 
 ```json
 {
-  "$comment": "Project-shared settings: allow/deny/hooks only. Never set defaultMode here — project files cannot grant bypass and doing so degrades the session to manual (owner wiki, 2026-09-21). Destructive-command blocks live in hooks/block-project-danger.sh so they match anywhere in a command and are logged.",
+  "$comment": "Project-shared settings: allow/deny, attribution and hooks only. Never set defaultMode here — project files cannot grant bypass and doing so degrades the session to manual (owner wiki, 2026-09-21). Empty attribution: commits and PRs carry no AI trailer or link (owner rule). Destructive-command and hook-bypass blocks live in hooks/block-project-danger.sh so they match anywhere in a command and are logged.",
   "permissions": {
     "allow": [
       "Bash(./gradlew *)",
@@ -538,6 +638,7 @@ exit 0
       "Read(./.env.*)"
     ]
   },
+  "attribution": { "commit": "", "pr": "", "sessionUrl": false },
   "hooks": {
     "SessionStart": [
       { "matcher": "", "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/inject-state.sh" } ] }
@@ -567,49 +668,187 @@ exit 0
 ```bash
 #!/usr/bin/env bash
 # Exercises every project hook and gate script with real input. Run after any hook change. Exit 0 = all pass.
+# Probes log to a temporary VERA_EVENTS_FILE and fixtures are throwaway repositories under one temp directory, so
+# neither the real gate-event logs nor this working tree are touched.
 set -uo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 H="$ROOT/.claude/hooks"
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+export VERA_EVENTS_FILE="$T/events.jsonl"
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 fail=0
 ok()   { echo "PASS $1"; }
 bad()  { echo "FAIL $1"; fail=1; }
+last() { tail -1 "$VERA_EVENTS_FILE"; }
+# fixture <dir>: a throwaway repository holding this checkout's hooks and scripts in one commit on main = origin/main.
+fixture() {
+  git init -q -b main "$1" && mkdir -p "$1/.claude" && cp -R "$H" "$1/.claude/" && cp -R "$ROOT/scripts" "$ROOT/.githooks" "$1/" \
+    && git -C "$1" add -A && git -C "$1" commit -qm "base" && git -C "$1" update-ref refs/remotes/origin/main HEAD
+}
+# simulate <arg>: a 30 s background process whose command line holds <arg>; its pid lands in $sim.
+simulate() { perl -e 'sleep 30' "$1" & sim=$!; for _ in $(seq 50); do pgrep -f "$1" >/dev/null && return; sleep 0.1; done; }
 
-# log-gate-event writes one valid JSON line with ticket parsed from branch
-tmp="$(mktemp)"; cp "$ROOT/.harness/events.jsonl" "$tmp" 2>/dev/null || true
+# log-gate-event writes one valid JSON line, masks secret-looking assignments only, and keeps the line ASCII (jq -a)
+# even for a detail with invalid UTF-8 (the lone byte \xff becomes U+FFFD)
 "$H/log-gate-event.sh" test-gate unit-test "hello world"
-tail -1 "$ROOT/.harness/events.jsonl" | jq -e '.gate=="test-gate" and .rule=="unit-test" and (.ts|length)==20' >/dev/null && ok "log-gate-event json" || bad "log-gate-event json"
-# remove the test line again
-if [ -s "$tmp" ]; then cp "$tmp" "$ROOT/.harness/events.jsonl"; else : > "$ROOT/.harness/events.jsonl"; fi; rm -f "$tmp"
+last | jq -e '.gate=="test-gate" and .rule=="unit-test" and (.ts|length)==20' >/dev/null && ok "log-gate-event json" || bad "log-gate-event json"
+"$H/log-gate-event.sh" test-gate mask "PGPASSWORD=a GH_TOKEN=b API_KEY=c aws_secret_access_key=d --password=e --token=f --api-key=g"
+[ "$(last | jq -r .detail)" = "PGPASSWORD=*** GH_TOKEN=*** API_KEY=*** aws_secret_access_key=*** --password=*** --token=*** --api-key=***" ] \
+  && ok "log-gate-event masks secret-looking assignments" || bad "log-gate-event masks secret-looking assignments"
+keep="RESULT check exit=1 seconds=3; git restore --source=HEAD x; git -c core.hooksPath=/dev/null push"
+"$H/log-gate-event.sh" test-gate keep "$keep"
+[ "$(last | jq -r .detail)" = "$keep" ] && ok "log-gate-event keeps other assignments readable" || bad "log-gate-event keeps other assignments readable"
+"$H/log-gate-event.sh" test-gate non-ascii "$(printf 'caf\xc3\xa9 \xff')"
+last | jq -e '.detail == "caf\u00e9 \ufffd"' >/dev/null && ! last | LC_ALL=C grep '[^ -~]' >/dev/null \
+  && ok "log-gate-event escapes non-ASCII and invalid UTF-8" || bad "log-gate-event escapes non-ASCII and invalid UTF-8"
+"$H/log-gate-event.sh" test-gate home "cat $HOME/x; PGPASSWORD=$HOME/y"
+[ "$(last | jq -r .detail)" = "cat <home>/x; PGPASSWORD=***" ] && ok "log-gate-event writes \$HOME as <home>" || bad "log-gate-event writes \$HOME as <home>"
 
-# inject-state emits hookSpecificOutput JSON
+# Without VERA_EVENTS_FILE every worktree logs to one untracked file in the git common dir; detached HEAD logs 'detached'
+F="$T/repo"; fixture "$F"
+git -C "$F" checkout -q --detach && git -C "$F" worktree add -q -b wt "$T/wt"
+env -u VERA_EVENTS_FILE "$F/.claude/hooks/log-gate-event.sh" test-gate shared "from the main checkout"
+env -u VERA_EVENTS_FILE "$T/wt/.claude/hooks/log-gate-event.sh" test-gate shared "from a worktree"
+jq -s -e 'map(.branch) == ["detached","wt"]' "$(git -C "$F" rev-parse --path-format=absolute --git-common-dir)/vera-events.jsonl" >/dev/null \
+  && [ -z "$(git -C "$F" status --porcelain)$(git -C "$T/wt" status --porcelain)" ] \
+  && ok "log-gate-event: one untracked log for every worktree" || bad "log-gate-event: one untracked log for every worktree"
+
+# publish-events appends the valid lines the tracked file lacks, in order; a re-run adds nothing
+printf '%s\n' '{"rule":"a"}' '{"rule":"b"}' '{"rule":"trunc' '{"rule":"c"}' > "$T/shared.jsonl"
+mkdir -p "$F/.harness" && printf '%s' '{"rule":"a"}' > "$F/.harness/events.jsonl"   # no final newline
+r1="$(VERA_EVENTS_FILE="$T/shared.jsonl" "$F/scripts/publish-events.sh")"; r2="$(VERA_EVENTS_FILE="$T/shared.jsonl" "$F/scripts/publish-events.sh")"
+[ "$r1 | $r2" = "RESULT publish-events exit=0 added=2 | RESULT publish-events exit=0 added=0" ] \
+  && [ "$(jq -r .rule "$F/.harness/events.jsonl" | tr '\n' ' ')" = "a b c " ] \
+  && ok "publish-events: new valid lines in order, idempotent" || bad "publish-events: new valid lines in order, idempotent"
+
+# inject-state emits hookSpecificOutput JSON with the Decisions of this checkout's wiki index
 out="$(echo '{}' | "$H/inject-state.sh")"
 printf '%s' "$out" | jq -e '.hookSpecificOutput.hookEventName=="SessionStart"' >/dev/null && ok "inject-state json" || bad "inject-state json"
-printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'Decisions' && ok "inject-state includes decisions" || bad "inject-state includes decisions"
+printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext' | grep 'Decisions' >/dev/null && ok "inject-state includes decisions" || bad "inject-state includes decisions"
+# ... stops at the marker line, not at prose quoting the marker, and counts events around a truncated line
+mkdir -p "$F/.harness/state"
+printf '%s\n' '# Progress' 'Move old entries below the <!-- ARCHIVE --> line.' '## current entry' '<!-- ARCHIVE -->' '## archived entry' > "$F/.harness/state/progress.md"
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s\n' "{\"ts\":\"$now\",\"gate\":\"g\",\"rule\":\"r\"}" '{"ts":"trunc' "{\"ts\":\"$now\",\"gate\":\"g\",\"rule\":\"r\"}" > "$T/inject.jsonl"
+ctx="$(echo '{}' | VERA_EVENTS_FILE="$T/inject.jsonl" "$F/.claude/hooks/inject-state.sh" | jq -r .hookSpecificOutput.additionalContext)"
+printf '%s\n' "$ctx" | grep -x '## current entry' >/dev/null && ! printf '%s\n' "$ctx" | grep -x '## archived entry' >/dev/null \
+  && ok "inject-state: a quoted marker does not cut progress short" || bad "inject-state: a quoted marker does not cut progress short"
+printf '%s\n' "$ctx" | grep -E '^ +2 g/r$' >/dev/null && ok "inject-state: a truncated event line hides nothing" || bad "inject-state: a truncated event line hides nothing"
+# ... and reads the tracked copy when the shared log does not exist yet (fresh clone)
+F2="$T/fresh"; fixture "$F2"; mkdir -p "$F2/.harness" && printf '%s\n' "{\"ts\":\"$now\",\"gate\":\"g\",\"rule\":\"tracked\"}" > "$F2/.harness/events.jsonl"
+echo '{}' | env -u VERA_EVENTS_FILE "$F2/.claude/hooks/inject-state.sh" | jq -r .hookSpecificOutput.additionalContext | grep -E '^ +1 g/tracked$' >/dev/null \
+  && ok "inject-state: fresh clone falls back to the tracked log" || bad "inject-state: fresh clone falls back to the tracked log"
 
 # stop-gate: loop guard exits 0 immediately
 echo '{"stop_hook_active": true}' | "$H/stop-gate.sh" >/dev/null 2>&1 && ok "stop-gate loop guard" || bad "stop-gate loop guard"
-# stop-gate: clean tree exits 0
-if [ -z "$(git -C "$ROOT" status --porcelain -- platform apps ingestion bootstrap)" ]; then
+# stop-gate: clean tree exits 0 (skipped when this checkout has source changes: the gate would run the real check.sh)
+if [ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all -- platform apps ingestion bootstrap build.gradle.kts settings.gradle.kts gradle config gradle.properties)" ]; then
   echo '{"stop_hook_active": false}' | "$H/stop-gate.sh" >/dev/null 2>&1 && ok "stop-gate clean tree" || bad "stop-gate clean tree"
 else
   echo "SKIP stop-gate clean tree (working tree dirty)"
 fi
+# stop-gate in a fixture whose check.sh always fails: it sees a .kt file in a new package directory and a name with a
+# space, and skips only while this checkout's wrapper jar runs, not for a process that merely names gradlew
+G="$T/gate"; fixture "$G"; printf '#!/usr/bin/env bash\necho "RESULT format exit=1 seconds=0"\nexit 1\n' > "$G/scripts/check.sh"
+gate() { echo '{"stop_hook_active": false}' | "$G/.claude/hooks/stop-gate.sh" >/dev/null 2>&1; echo $?; }
+mkdir -p "$G/platform/m/src/main/kotlin/new/pkg" && : > "$G/platform/m/src/main/kotlin/new/pkg/New.kt"
+[ "$(gate)" = 2 ] && ok "stop-gate sees a .kt file in a new package directory" || bad "stop-gate sees a .kt file in a new package directory"
+rm -rf "$G/platform" && mkdir -p "$G/platform/a b" && : > "$G/platform/a b/C.kt"
+[ "$(gate)" = 2 ] && ok "stop-gate sees a file name with a space" || bad "stop-gate sees a file name with a space"
+simulate "$(git -C "$G" rev-parse --show-toplevel)/gradle/wrapper/gradle-wrapper.jar"   # physical path, as gradlew's pwd -P
+[ "$(gate)" = 0 ] && last | jq -e '.rule=="skipped-concurrent-gradle"' >/dev/null \
+  && ok "stop-gate skips while this checkout's wrapper jar runs" || bad "stop-gate skips while this checkout's wrapper jar runs"
+kill "$sim"; wait "$sim" 2>/dev/null
+simulate "gradlew GradleWrapperMain"
+[ "$(gate)" = 2 ] && ok "stop-gate ignores a process that only names gradlew" || bad "stop-gate ignores a process that only names gradlew"
+kill "$sim"; wait "$sim" 2>/dev/null
 
 # format: ignores non-Kotlin files and exits 0
 echo '{"tool_input":{"file_path":"'"$ROOT"'/README.md"}}' | "$H/format.sh" && ok "format ignores md" || bad "format ignores md"
 
-# block-project-danger: blocks the five destructive patterns (exit 2), passes a normal command (exit 0).
-# Events written by these probes are discarded by restoring the backup (portable; macOS head has no negative -n).
-bak="$(mktemp)"; cp "$ROOT/.harness/events.jsonl" "$bak" 2>/dev/null || : > "$bak"
-for c in "./gradlew flywayClean" "docker compose down -v" "psql -c 'drop schema vera cascade'" "git checkout -- ." "git push --force origin main"; do
+# block-project-danger: blocks the destructive and hook-bypass patterns (exit 2), passes normal commands (exit 0),
+# also behind git's global options ('git -C <path> ...', the form CLAUDE.md mandates).
+for c in "./gradlew flywayClean" "docker compose down -v" "psql -c 'drop schema vera cascade'" "git checkout -- ." "git push --force origin main" \
+         "git push --no-verify origin main" "git config core.hooksPath /dev/null" "git config --unset core.hooksPath" "git -c core.hooksPath=/dev/null push origin main" \
+         "git -C $ROOT checkout -- ." "git -C $ROOT restore ." "git -C $ROOT push --force origin x" "git -C $ROOT push -f origin x" \
+         "git checkout HEAD -- ." "git -C $ROOT restore --source=HEAD ." "git -C $ROOT push --no-verify origin x" "git -C $ROOT restore --staged ." \
+         "git -C $ROOT reset --hard" "git -C $ROOT clean -fd" "git -C $ROOT clean --force" "git -C $ROOT push origin +x" \
+         "git -C $ROOT push -fu origin x" "git -C $ROOT push -uf origin x" "git config 'core.hooksPath' /dev/null" "git -c 'core.hooksPath=/dev/null' push origin x"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1
   [ $? -eq 2 ] && ok "block-project-danger blocks: $c" || bad "block-project-danger blocks: $c"
 done
-echo '{"tool_input":{"command":"./scripts/check.sh"}}' | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes check.sh" || bad "block-project-danger passes check.sh"
-cp "$bak" "$ROOT/.harness/events.jsonl"; rm -f "$bak"
+for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config --get core.hooksPath" \
+         "git -C $ROOT checkout -- docs/x.md" "git -C $ROOT checkout -- ./docs/x.md" "git -C $ROOT checkout -- .gitattributes" \
+         "git -C $ROOT push origin x" "git -C $ROOT status" "git -C $ROOT config core.hooksPath .githooks" \
+         "git -C $ROOT reset -q" "git -C $ROOT reset --soft HEAD~1" "git clean -n" "git push origin main"; do
+  echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes: $c" || bad "block-project-danger passes: $c"
+done
+# A pattern on the first line of a long multi-line command is still blocked: under pipefail, a reader that exits early
+# (grep -q) would kill the writer with SIGPIPE once the input outgrows the pipe buffer, and the match would read as a miss.
+long="git push --force origin x"$'\n'"$(seq -f 'echo padding line %g' 1 8000)"
+jq -cn --arg c "$long" '{tool_input:{command:$c}}' | "$H/block-project-danger.sh" >/dev/null 2>&1
+[ $? -eq 2 ] && ok "block-project-danger blocks: force push on line 1 of a >100 KB command" || bad "block-project-danger blocks: force push on line 1 of a >100 KB command"
 
 # guards: current HEAD against itself must pass
 "$ROOT/scripts/guards.sh" HEAD HEAD >/dev/null 2>&1 && ok "guards no-op range" || bad "guards no-op range"
+
+# guards and pre-push in a fixture, offline: origin/main is a local ref and the remote a bare repository under $T.
+# Secrets and Korean text are built from escapes at run time, so this file holds neither.
+P="$T/guards"; fixture "$P"; git init -q --bare "$T/remote.git"; git -C "$P" config core.hooksPath .githooks
+commit_in() { git -C "$1" add -A && git -C "$1" commit -qm "$2"; }
+guards_last() { "$P/scripts/guards.sh" HEAD~1 HEAD 2>&1 || true; }   # output only: under pipefail a violation's exit 1 would fail the grep
+out="$("$P/scripts/guards.sh" no-such-ref HEAD 2>&1)"
+[ $? -eq 2 ] && printf '%s' "$out" | grep 'git fetch origin main' >/dev/null && ok "guards: a ref that does not resolve is exit 2" || bad "guards: a ref that does not resolve is exit 2"
+mkdir -p "$T/nogit" && cp "$P/scripts/guards.sh" "$T/nogit/" && out="$(cd "$T/nogit" && ./guards.sh 2>&1)"
+[ $? -eq 2 ] && printf '%s' "$out" | grep 'not inside a git checkout' >/dev/null && ok "guards: outside a checkout is exit 2" || bad "guards: outside a checkout is exit 2"
+# A branch behind main is judged from the merge-base: a test main gained after the fork is not "deleted" by the branch
+B="$T/behind"; fixture "$B"; git -C "$B" switch -q -c feature && printf 'x\n' > "$B/notes.txt" && commit_in "$B" "docs: notes"
+git -C "$B" switch -q main && mkdir -p "$B/m/src/test/kotlin" && printf 'class N { fun n() = assertThat(1) }\n' > "$B/m/src/test/kotlin/N.kt" \
+  && commit_in "$B" "test: N" && git -C "$B" update-ref refs/remotes/origin/main main
+n="$(wc -l < "$VERA_EVENTS_FILE")"
+"$B/scripts/guards.sh" origin/main feature >/dev/null 2>&1 && [ "$(wc -l < "$VERA_EVENTS_FILE")" = "$n" ] \
+  && ok "guards: a branch behind main is judged from the merge-base" || bad "guards: a branch behind main is judged from the merge-base"
+mkdir -p "$P/m/src/main/kotlin" && printf '*.kt -diff\n' > "$P/.gitattributes" && printf '@Suppress("X")\nclass A\n' > "$P/m/src/main/kotlin/A.kt"
+commit_in "$P" "feat: a suppression behind -diff"
+guards_last | grep 'new suppression' >/dev/null && ok "guards: '*.kt -diff' hides no added line" || bad "guards: '*.kt -diff' hides no added line"
+mkdir -p "$P/m/src/test/kotlin" && printf 'class T { fun t() = assertThat(1) }\n' > "$P/m/src/test/kotlin/T.kt" && commit_in "$P" "test: add T"
+git -C "$P" rm -q m/src/test/kotlin/T.kt && commit_in "$P" $'test: drop T\n\nTest-Change:'
+guards_last | grep 'test files deleted' >/dev/null && ok "guards: 'Test-Change:' without a reason excuses nothing" || bad "guards: 'Test-Change:' without a reason excuses nothing"
+git -C "$P" commit -q --amend -m $'test: drop T\n\nTest-Change: obsolete probe'
+"$P/scripts/guards.sh" HEAD~1 HEAD >/dev/null 2>&1 && ok "guards: 'Test-Change: <reason>' accepts the deletion" || bad "guards: 'Test-Change: <reason>' accepts the deletion"
+printf 'k = "%s"\n' "sk-ant-$(printf 'x%.0s' $(seq 24))" > "$P/k1.txt" && commit_in "$P" "chore: k1"
+guards_last | grep 'secret-like literal' >/dev/null && ok "guards: an sk-ant- key is a secret" || bad "guards: an sk-ant- key is a secret"
+printf 'k = "%s"\n' "github_pat_$(printf 'y%.0s' $(seq 24))" > "$P/k2.txt" && commit_in "$P" "chore: k2"
+guards_last | grep 'secret-like literal' >/dev/null && ok "guards: a github_pat_ token is a secret" || bad "guards: a github_pat_ token is a secret"
+printf 'jamo %s\n' "$(printf '\xe3\x84\xb1')" > "$P/j1.md" && commit_in "$P" "docs: j1"
+guards_last | grep 'Korean text added' >/dev/null && ok "guards: compatibility jamo are Korean" || bad "guards: compatibility jamo are Korean"
+printf 'jamo %s\n' "$(printf '\xe1\x84\x80')" > "$P/j2.md" && commit_in "$P" "docs: j2"
+guards_last | grep 'Korean text added' >/dev/null && ok "guards: Hangul Jamo are Korean" || bad "guards: Hangul Jamo are Korean"
+printf 'ok\n' > "$P/j3.md" && commit_in "$P" "docs: $(printf '\xed\x95\x9c')"
+guards_last | grep 'Korean text in a commit message' >/dev/null && ok "guards: Korean in a commit message" || bad "guards: Korean in a commit message"
+n="$(wc -l < "$VERA_EVENTS_FILE")"; printf '#!/usr/bin/env bash\necho "$*" >> "$GUARDS_OUT"\n' > "$T/logger" && chmod +x "$T/logger"
+GUARDS_OUT="$T/logger.out" GUARDS_LOGGER="$T/logger" "$P/scripts/guards.sh" HEAD~1 HEAD >/dev/null 2>&1
+grep '^pre-push-guard non-english' "$T/logger.out" >/dev/null && [ "$(wc -l < "$VERA_EVENTS_FILE")" = "$n" ] \
+  && ok "guards: GUARDS_LOGGER replaces the event logger" || bad "guards: GUARDS_LOGGER replaces the event logger"
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/main >/dev/null 2>&1
+[ $? -ne 0 ] && last | jq -e '.rule=="push-to-main"' >/dev/null && ok "pre-push refuses a push to main" || bad "pre-push refuses a push to main"
+git -C "$P" update-ref refs/remotes/origin/main HEAD
+printf 'x\n' > "$P/scripts/x.txt" && commit_in "$P" $'chore: touch scripts\n\nWiki-Skip:'
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1
+[ $? -ne 0 ] && last | jq -e '.rule=="blocked-no-wiki-change"' >/dev/null && ok "pre-push: 'Wiki-Skip:' without a reason does not pass" || bad "pre-push: 'Wiki-Skip:' without a reason does not pass"
+git -C "$P" commit -q --amend -m $'chore: touch scripts\n\nWiki-Skip: probe, nothing decided'
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1 && ok "pre-push: 'Wiki-Skip: <reason>' passes" || bad "pre-push: 'Wiki-Skip: <reason>' passes"
+# The wiki gate also covers CI, the review contract, detekt config and the root build (neither ADR nor trailer here)
+for f in .github/workflows/x.yml REVIEW.md config/detekt/x.yml settings.gradle.kts gradle/x.toml; do
+  git -C "$P" switch -q -C wiki-gate refs/remotes/origin/main && mkdir -p "$P/$(dirname "$f")" && printf 'x\n' > "$P/$f" && commit_in "$P" "chore: touch $f"
+  git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/wiki-gate >/dev/null 2>&1
+  [ $? -ne 0 ] && last | jq -e '.rule=="blocked-no-wiki-change"' >/dev/null && ok "pre-push wiki gate covers $f" || bad "pre-push wiki gate covers $f"
+done
+git -C "$P" switch -q main
+git -C "$P" worktree add -q "$T/pwt" -b wt-guards && printf '@Suppress("Y")\nclass B\n' > "$T/pwt/m/src/main/kotlin/B.kt" && commit_in "$T/pwt" "feat: B"
+git -C "$T/pwt" push -q "$T/remote.git" HEAD:refs/heads/wt-guards >/dev/null 2>&1
+[ $? -ne 0 ] && jq -s -e 'map(select(.branch=="wt-guards" and .rule=="new-suppress")) | length == 1' "$VERA_EVENTS_FILE" >/dev/null \
+  && ok "guards log from a worktree (git exports GIT_DIR to hooks there)" || bad "guards log from a worktree (git exports GIT_DIR to hooks there)"
 
 exit $fail
 ```
@@ -617,7 +856,7 @@ exit $fail
 - [ ] **Step 8: Make executable and run the hook tests (guards.sh comes in Task 7; run again then)**
 
 ```bash
-chmod +x /Users/yu-sun00/Desktop/vera/.claude/hooks/*.sh /Users/yu-sun00/Desktop/vera/scripts/test-hooks.sh
+chmod +x /Users/yu-sun00/Desktop/vera/.claude/hooks/*.sh /Users/yu-sun00/Desktop/vera/scripts/test-hooks.sh /Users/yu-sun00/Desktop/vera/scripts/publish-events.sh
 mkdir -p /Users/yu-sun00/Desktop/vera/.harness && : > /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
 /Users/yu-sun00/Desktop/vera/scripts/test-hooks.sh; echo exit=$?
 ```
@@ -627,7 +866,7 @@ Expected: `PASS` for every line except `guards no-op range` (FAIL until Task 7) 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add .claude/settings.json .claude/hooks scripts/test-hooks.sh .worktreeinclude .harness/events.jsonl
+git add .claude/settings.json .claude/hooks scripts/test-hooks.sh scripts/publish-events.sh .worktreeinclude .harness/events.jsonl
 git commit -m "chore: add project hooks (state injection, stop gate, formatter, gate-event log) and settings"
 ```
 
@@ -665,14 +904,15 @@ paths:
 paths:
   - "**/internal/**/*Repository*.kt"
   - "**/internal/**/*Jooq*.kt"
+  - "**/platform/query/src/main/**"
 ---
 # jOOQ adapters
 
 - Repository implementations MUST be `internal` and named `Jooq<Aggregate>Repository`.
-- Dynamic identifiers MUST come from `TableName`/`FieldName` value objects; never build SQL from raw strings.
+- Dynamic identifiers MUST come from `TableName`/`FieldName` value objects and be rendered with `DSL.table(DSL.name(...))` / `DSL.field(DSL.name(...), type)`; never the `String` overloads (plain SQL, unquoted), never SQL built from raw strings.
 - Use the Spring-provided `DSLContext`; never construct a second one (breaks transactional DDL — PoC 1).
 - Return domain types, not jOOQ `Record`s, from the repository boundary.
-- Verify: `./scripts/itest.sh :<module>`.
+- Verify: `./scripts/itest.sh` (no module argument; the Spring context tests live in `:bootstrap` for now).
 ```
 
 `.claude/rules/web.md`:
@@ -688,7 +928,7 @@ paths:
 - Request/response DTOs are `data class`es in the same package; never expose domain objects directly.
 - Validation with Jakarta annotations on DTOs; domain value objects validate again on construction.
 - Error responses follow RFC 9457 problem details (`ProblemDetail`), never stack traces.
-- Verify: a `@WebMvcTest` (starter `spring-boot-starter-webmvc-test`) per controller.
+- Verify: a `@WebMvcTest` (starter `spring-boot-starter-webmvc-test`) per controller, in `:bootstrap` for now.
 ```
 
 `.claude/rules/test.md`:
@@ -704,8 +944,8 @@ paths:
 
 - One behaviour per test; the name states the behaviour in backticks.
 - Acceptance criteria (`WHEN … THE SYSTEM SHALL …`) from the ticket map to tests 1:1 — name them alike.
-- `itest`: `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`. No H2, no mocks of the database.
-- Never delete or weaken an assertion to go green. If a test is wrong, say so in the commit body and add the trailer `Test-Change: <reason>` (pre-push guard).
+- `itest`: `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`; Spring context tests live in `:bootstrap` for now. No H2, no mocks of the database.
+- Never delete or weaken an assertion to go green. If a test is wrong, deleting it or reducing assertions needs the reason in the commit body and the trailer `Test-Change: <reason>` (pre-push guard); adding tests needs none.
 - Fixtures MUST NOT contain real names, emails, serial numbers or the words `password=`/`token=` with literal values (secret hook false-positives).
 ```
 
@@ -721,7 +961,7 @@ paths:
 - File name `V<yyyyMMdd>_<hhmm>__<slug>.sql`; timestamp versions avoid worktree collisions.
 - A merged migration is immutable. Fix forward with a new file (pre-push guard blocks edits to merged `V*.sql`).
 - Every DDL change ships with its rollback note in the PR (a `drop`/`alter` statement or "plain revert").
-- No data migrations in DDL files; data moves go through an `ApplicationRunner` documented in an ADR.
+- No data migrations in DDL files. Data migrations need an ADR before the first one (mechanism undecided: a Flyway Java migration or an idempotent runner).
 ```
 
 - [ ] **Step 2: Commit**
@@ -735,31 +975,33 @@ git commit -m "docs: add path-scoped agent rules for domain, persistence, web, t
 
 ### Task 5: Project skills — the GitHub flow and task lifecycle
 
-Same-name project skills override the global GitLab ones (`issue`, `commit`) as programmers-tracker does.
+A personal skill outranks a same-name project skill (Claude Code docs, "Resolve skills that share a name": enterprise over personal over project), so the GitHub flow uses the distinct names `ticket` and `gated-commit` instead of the global GitLab `issue` and `commit`; `pull-request`, `start-task`, `finish-task` and `wiki-*` do not collide, and a skill also wins over a same-name file in `~/.claude/commands/`.
 
 **Files:**
-- Create: `.claude/skills/issue/SKILL.md`, `.claude/skills/commit/SKILL.md`, `.claude/skills/pull-request/SKILL.md`, `.claude/skills/start-task/SKILL.md`, `.claude/skills/finish-task/SKILL.md`
+- Create: `.claude/skills/ticket/SKILL.md`, `.claude/skills/gated-commit/SKILL.md`, `.claude/skills/pull-request/SKILL.md`, `.claude/skills/start-task/SKILL.md`, `.claude/skills/finish-task/SKILL.md`
 
-- [ ] **Step 1: Write `issue/SKILL.md`**
+- [ ] **Step 1: Write `ticket/SKILL.md`**
 
 ```markdown
 ---
-name: issue
-description: Create a GitHub issue from the task template (EARS acceptance criteria, owned module, verify commands), then a branch <type>/<n>-<slug> from fresh main. Use when starting any work — the constitution forbids work without an issue.
-disable-model-invocation: true
+name: ticket
+description: Create a GitHub issue from the task template (EARS acceptance criteria, owned module, verify commands) once the owner approves the preview, then a branch <type>/<n>-<slug> from fresh main. Use when the owner asks for new work and no issue exists yet; the constitution forbids work without an issue. Not for an existing issue (use /start-task).
 ---
 
 # Create issue and branch
 
-Flow: issue → branch → /start-task → work → /commit → /finish-task → /pull-request → squash merge.
+Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-task → /pull-request → squash merge.
+
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
 
 ## Process
 1. Ask the type (one question): feat | fix | refactor | test | docs | chore | harness.
 2. Draft the body from the task template below. Ask only for what you cannot infer; **Non-goals and Verify must not be empty**.
-3. Preview, confirm (Yes / Edit / Cancel).
-4. `gh issue create --title "<Type> title" --label task --label <type> --milestone <phase> --body-file <tmp>`
+3. Show the preview; the owner approves it (Yes / Edit / Cancel). Create nothing before a Yes.
+4. `gh issue create --title "<Type> title" --label task --label <type> --milestone phase-<n> --body-file <tmp>`
 5. `git -C <root> fetch origin main && git -C <root> switch -c <type>/<n>-<slug> origin/main`
-   (if the owner uses Orca, print the Orca task-create command instead: one ticket = one worktree.)
+   With Orca instead: `orca worktree create --name <type>/<n>-<slug> --base-branch origin/main --issue <n> --agent claude --prompt "/start-task <n>"` (one ticket = one worktree).
+   Check with `orca worktree show --worktree issue:<n>` that the branch is exactly `<type>/<n>-<slug>`; the new worktree's agent continues with /start-task and this session's part ends.
 
 ## Task template (issue body)
 ```
@@ -769,7 +1011,7 @@ Flow: issue → branch → /start-task → work → /commit → /finish-task →
 ## Context
 - Spec: docs/superpowers/specs/<file>#<section> (or "none")
 - ADR: <link or "may need one">
-- Owned module: :platform:<name> | :apps:itam | :ingestion | :bootstrap  (no edits outside it)
+- Owned module: <Modulith module, e.g. metadata> (Gradle project `:platform:metadata`) — or `harness` for gate/hook/workflow work — plus the always-allowed files in CLAUDE.md
 - Blocked by: #<n> (or "none")   Blocks: #<n> (or "none")
 
 ## Acceptance criteria (EARS)
@@ -781,47 +1023,48 @@ Flow: issue → branch → /start-task → work → /commit → /finish-task →
 
 ## Verify
 - ./scripts/check.sh
-- ./scripts/itest.sh :<module>
+- ./scripts/itest.sh
 
 ## Size guard
-≤400 changed lines, ≤10 files. If exceeded: split into stacked PRs and link them here.
+≤400 changed lines, ≤10 files (`.harness/events.jsonl` excluded). If exceeded: split into stacked PRs and link them here.
 
 ## Risks / Rollback
 - <migration reversal or "plain revert">
 ```
 
 ## Labels
-`task` always; type label; `harness` for gate/hook work; milestone = phase.
+`task` always; type label; `harness` for gate/hook/workflow work; milestone `phase-<n>`.
 ```
 
-- [ ] **Step 2: Write `commit/SKILL.md`**
+- [ ] **Step 2: Write `gated-commit/SKILL.md`**
 
 ```markdown
 ---
-name: commit
-description: Stage-aware Conventional Commit in English with no AI attribution. Runs the project gates (test pair, English-only, trailers) before the preview. Use for every commit in this repository.
-disable-model-invocation: true
+name: gated-commit
+description: Commit staged changes as an English Conventional Commit with no AI attribution, after the project gates pass (test pair, trailers, immutable migrations, English-only). Use for every commit in this repository; do not run git commit directly.
 ---
 
-# Commit (project)
+# Gated commit (project)
+
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
 
 ## Rules
 - English only. Conventional Commits `<type>(<scope>): <subject>` — imperative, ≤50 chars, no period; body ≤72 cols says what and why.
 - **No AI attribution** — no `Co-Authored-By`, no Claude/AI trailer of any kind.
-- Preview first; commit only after "yes" (skip with `--quick`).
+- Show the preview, then commit — no owner confirmation; the gates below replace it.
 
 ## Gates before the preview
-1. `git diff --cached --name-only` empty → tell the user to stage, stop.
+1. `git diff --cached --name-only` empty → stage the files this commit is about (by path), or stop if there is nothing to commit.
 2. New production `.kt` without a test `.kt` in the same PR scope → warn loudly (push gate will enforce).
-3. Test files changed with fewer assertions → require trailer `Test-Change: <reason>` in the body.
-4. Files under `db/migration/` modified (not added) → refuse (immutable migrations).
-5. Non-ASCII Hangul in staged files other than `README.ko.md` → refuse (English artifacts).
+3. Test files deleted or with fewer assertions → require trailer `Test-Change: <reason>` with the reason in the body; adding tests needs none.
+4. Files under `db/migration/` that exist on `origin/main` and are modified → refuse (immutable migrations); a migration added in this branch may still change.
+5. Hangul in an added staged line outside `README.ko.md` → refuse (English artifacts). The scan matches guards.sh check 6 (same bytes, jamo included; only added lines, so English edits to a file that already holds Korean pass): `git -C <root> diff --cached --text -U0 -- . ':(exclude)README.ko.md' ':(exclude)docs/research/' | LC_ALL=C command grep -E $'^\\+.*([\xEA-\xED][\x80-\xBF][\x80-\xBF]|\xE3[\x84-\x86][\x80-\xBF]|\xE1[\x84-\x87][\x80-\xBF])'` — any output refuses. Plain `grep` may be ugrep in the agent shell and miss byte patterns.
 6. Run `./scripts/check.sh`; paste its `RESULT` line into the preview.
 
 ## Process
 1. Analyse the staged diff, pick type/scope/subject.
 2. Show: message, `RESULT` line, `git diff --cached --stat`.
-3. On yes: `git -C <root> commit -F <tmpfile>`.
+3. Commit: `git -C <root> commit -F <tmpfile>`.
 ```
 
 - [ ] **Step 3: Write `pull-request/SKILL.md`**
@@ -829,16 +1072,17 @@ disable-model-invocation: true
 ```markdown
 ---
 name: pull-request
-description: Push the branch, create the GitHub PR with the Evidence template filled from real command output, wait for checks, and squash-merge with branch deletion when green. Use when /finish-task has recorded evidence.
-disable-model-invocation: true
+description: Push the branch, open the GitHub PR with real evidence, drive the required checks green, and squash-merge only after the owner approves the design review and the merge. Use after /finish-task has committed its records.
 ---
 
 # Pull request (GitHub, squash only)
 
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+
 ## Pre-flight
 1. On a work branch with commits ahead of `origin/main`.
 2. `.harness/state/progress.md` updated in this branch — else stop and update.
-3. `docs/llm-wiki/` changed in this branch, or a `Wiki-Skip: <reason>` trailer exists — else run /wiki-ingest first.
+3. The branch changes a file under `docs/llm-wiki/wiki/` other than `concepts/lessons.md` (an ADR via /wiki-ingest), or carries a `Wiki-Skip: <reason>` trailer — used only when no decision was made.
 4. `git -C <root> push -u origin <branch>`. If the pre-push gate blocks, read its message: guards are fail-closed (fix the code), the wiki gate accepts the trailer.
 
 ## Body (from `.github/PULL_REQUEST_TEMPLATE.md`)
@@ -848,10 +1092,14 @@ disable-model-invocation: true
 - Labels: `test-change` if any file under `src/test|itest|archTest` changed.
 
 ## Create and merge
-1. `gh pr create --fill-first --body-file <tmp> [--label test-change]`
-2. `gh pr checks --watch` until all required checks pass; if `claude-review` requests changes, address blocking items, push, re-watch.
-3. Ask the owner for the design review (five items in CLAUDE.md §Role). On approval: `gh pr merge --squash --delete-branch`.
-4. `git -C <root> switch main && git -C <root> pull --ff-only`.
+1. `gh pr create --title "<type>: <subject>" --body-file <f> [--label test-change]` — not `--fill-first`: the PR title becomes the squash commit title.
+2. `gh pr checks --watch` until all required checks pass. Log each failing required check with `<root>/.claude/hooks/log-gate-event.sh ci <check> <run url>`, fix, push. A failure the branch cannot fix (a missing secret, an outage) is reported to the owner, not pushed around.
+   `claude-review` runs on opened/ready_for_review only: after pushing a fix, re-trigger it with `gh pr ready --undo && gh pr ready`. Fix its blocking items; reply to and resolve every review thread, including findings you dismiss (`gh api graphql`, mutation `resolveReviewThread`; conversation resolution is required).
+3. Behind or conflicting with `origin/main`: `git -C <root> merge origin/main` — never rebase and force push (blocked) — keep both sides' entries in state files, re-run `./scripts/check.sh`, push.
+4. Before asking for the merge approval, run `<root>/scripts/publish-events.sh`. If it reports `added=` above 0, commit `.harness/events.jsonl` via /gated-commit with `Wiki-Skip: event log` in the body, push and watch the checks again (events from that last push reach the log with the next ticket).
+5. Ask the owner for the design review (the five items on the PR template's "Owner design review" line) and for explicit merge approval, presented in chat in the owner's language (Korean): what changed and why, how the flow or behaviour changes, each of the five items with its evidence, the risks and deferred items, and the files worth opening first. The PR itself stays in English. Merge only after both approvals.
+6. Merge. In a worktree: `gh pr merge --squash` (after Task 13, the repo deletes merged branches), then from the main checkout (`<main>` = the first path of `git worktree list`) run `git -C <main> pull --ff-only` and remove the worktree with `orca worktree rm --worktree branch:<branch>` or `git -C <main> worktree remove <path>`.
+   Without a worktree: `gh pr merge --squash --delete-branch`, then `git -C <root> switch main && git -C <root> pull --ff-only`.
 ```
 
 - [ ] **Step 4: Write `start-task/SKILL.md`**
@@ -859,8 +1107,7 @@ disable-model-invocation: true
 ```markdown
 ---
 name: start-task
-description: Load a ticket into the session (issue body, acceptance criteria, owned module), refresh state, and produce a plan or decide to skip planning. Use at the start of every ticket after /issue.
-disable-model-invocation: true
+description: Load a GitHub issue into the session (body, acceptance criteria, owned module), refresh state, and produce a plan or decide to skip planning. Use right after /ticket, or when the owner names an existing issue to work on, before touching any file.
 ---
 
 # Start task
@@ -868,9 +1115,11 @@ disable-model-invocation: true
 1. `gh issue view <n> --json title,body,labels,milestone` — read Goal, Context, EARS criteria, Non-goals, Verify, Blocked-by.
    If **Blocked by** names an open issue → stop and report; the ready queue excludes it.
 2. Confirm you are on `<type>/<n>-<slug>` and, when parallel, in your own worktree.
+   If the branch does not exist yet (an owner-filed or harness-improve issue), create it as in /ticket step 5.
 3. Re-read `.harness/state/goal.md`, `progress.md` (above the marker), and any ADR the ticket links.
 4. Explore the owned module only: existing tests first, then code. Use a subagent for anything wider.
-5. Decide: one-sentence diff → implement directly. Otherwise write a numbered plan (files, tests per EARS line, order) and show it before coding.
+   Before creating files, Read the `.claude/rules/*.md` whose `paths` match them — rules load when a matching file is read, not when one is written.
+5. Decide: one-sentence diff → implement directly. Otherwise write a numbered plan (files, tests per EARS line, order), show it, then proceed.
 6. Write `.harness/state/goal.md` "Current ticket" block: number, EARS lines, verify commands.
 ```
 
@@ -879,41 +1128,45 @@ disable-model-invocation: true
 ```markdown
 ---
 name: finish-task
-description: Close the loop on a ticket — collect evidence, run the adversarial reviewer, update progress, write the counted retro into lessons.md, and hand off to /pull-request. Use when the code is done and the gates are green.
-disable-model-invocation: true
+description: Close the loop on a ticket once the code is done and check.sh and itest.sh are green — collect evidence, run the independent review, record progress and the counted retro, commit those records, then hand off to /pull-request. Not for work in progress.
 ---
 
 # Finish task
 
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+
 ## 1. Evidence (paste real output later into the PR)
 - `./scripts/check.sh` → keep the last 30 lines and the `RESULT` line.
-- `./scripts/itest.sh :<module>` → same.
-- `git -C <root> diff --stat origin/main...HEAD` → owned module only? size ≤400 lines? If not, stop and split.
+- `./scripts/itest.sh` → same.
+- `git -C <root> diff --stat origin/main...HEAD` → owned module plus the always-allowed files only? size ≤400 lines (`.harness/events.jsonl` excluded)? If not, stop and split.
 
 ## 2. Independent review
-Run `/code-review`, then the `critic` subagent with: "Do not trust the implementer's claims. Verify by running. Attack: boundary values, null/empty, concurrency, ACL bypass, migration reversibility. Report gaps affecting correctness or requirements only." Fix blocking findings; list the rest with disposition.
+Run `/code-review` for a general pass, then the `critic` subagent: have it apply REVIEW.md's must-check list to `git -C <root> diff origin/main...HEAD`, then attack with: "Do not trust the implementer's claims. Verify by running. Attack: boundary values, null/empty, concurrency, ACL bypass, migration reversibility. Report gaps affecting correctness or requirements only." Fix blocking findings and log each one with `<root>/.claude/hooks/log-gate-event.sh critic <rule> <one line>`; list the rest with disposition.
 
 ## 3. Progress
-Append to `.harness/state/progress.md` above `<!-- ARCHIVE -->`: `## [YYYY-MM-DD] #<n> <title> ✅` + commits + evidence lines.
+Append to `.harness/state/progress.md` above `<!-- ARCHIVE -->`: `## [YYYY-MM-DD] #<n> <title> ✅` + evidence lines. `#<n>` is the issue number — the PR's `Closes #<n>` links the two; no commit hashes (the squash merge rewrites them).
 
 ## 4. Retro → counted lessons (self-improvement loop, spec §10.1)
 Answer three questions in one line each and merge into `docs/llm-wiki/wiki/concepts/lessons.md`:
 - What was slow? · What did the agent get wrong? · Which rule or check was missing?
 If an equivalent lesson exists, increment its `count:` and add the ticket number; otherwise add a new entry with `count: 1`.
-A lesson with `count: 3` is due for promotion (weekly routine opens the PR) — do not promote it yourself.
+A lesson with `count: 3` is due for promotion (the weekly routine opens a PR, or an issue for `.claude/rules|hooks`) — do not promote it yourself.
 
 ## 5. Decisions
-Any decision made → ADR via /wiki-ingest (push gate checks). None → plan to use `Wiki-Skip: no decision` trailer.
+Any decision made → ADR via /wiki-ingest (push gate checks). None → step 6 adds the `Wiki-Skip: no decision` trailer.
 
-## 6. Hand off
+## 6. Commit the records
+Run `<root>/scripts/publish-events.sh` (copies new gate events from the shared, untracked log into `.harness/events.jsonl`; keep its `RESULT` line), then stage `.harness/state/progress.md`, `docs/llm-wiki/wiki/concepts/lessons.md`, `.harness/events.jsonl` and any ADR, then run /gated-commit; with no decision, put `Wiki-Skip: no decision` in that commit's body.
+
+## 7. Hand off
 Run /pull-request.
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add .claude/skills/issue .claude/skills/commit .claude/skills/pull-request .claude/skills/start-task .claude/skills/finish-task
-git commit -m "feat: add project skills for issue, commit, start-task, finish-task and pull-request"
+git add .claude/skills/ticket .claude/skills/gated-commit .claude/skills/pull-request .claude/skills/start-task .claude/skills/finish-task
+git commit -m "feat: add project skills for ticket, gated-commit and the task lifecycle"
 ```
 
 ---
@@ -957,11 +1210,11 @@ docs/llm-wiki/
 ## lessons.md format (feeds the self-improvement loop)
 ```
 ### <lesson slug>
-count: <n> · tickets: #12, #15 · first: 2026-10-02 · last: 2026-10-09 · status: open|promoted|dropped
+count: <n> · tickets: #12, #15 · first: 2026-10-02 · last: 2026-10-09 · status: open|proposed|promoted|dropped
 what: <one line: what was slow / wrong / missing>
 fix: <what a rule, hook, test or lint would look like>
 ```
-`count` ≥ 3 → the weekly routine proposes a promotion PR; on merge the entry becomes `status: promoted` and moves to the bottom.
+`count` ≥ 3 → the weekly routine proposes a promotion (a PR, or an issue for `.claude/rules|hooks`) and marks the entry `status: proposed` with the link; once the owner merges it, the entry becomes `status: promoted` and moves to the bottom.
 
 ## Workflows
 - **ingest** — `/wiki-ingest`: read index → save raw → source stub → integrate into pages (merge, never overwrite) → index + links → log line.
@@ -990,7 +1243,7 @@ Read this first. Every page is registered here; entries start with a date so mer
 - 2026-09-30 [[decisions/2026-09-30-human-approved-self-improvement-loop]] — D9: events → counted lessons → weekly proposal PRs → monthly prune PRs, owner merges
 
 ## Concepts
-- 2026-09-30 [[concepts/lessons]] — counted lessons feeding the self-improvement loop (open / promoted / dropped)
+- 2026-09-30 [[concepts/lessons]] — counted lessons feeding the self-improvement loop (open / proposed / promoted / dropped)
 
 ## Sources
 - 2026-09-30 [[sources/2026-09-30-phase0-design-and-research]] — origin chat + 2026-09 methodology research → spec + D1–D9
@@ -1002,6 +1255,7 @@ Read this first. Every page is registered here; entries start with a date so mer
 # Log (append-only)
 
 ## [2026-09-30] bootstrap | wiki created with schema, index, lessons.md, 9 ADRs (D1–D9), 1 source stub
+## [2026-10-02] update | ADRs D1, D2, D4, D5, D6, D7, D9 corrected during Plan B execution (facts, flow and event-log changes)
 ```
 
 `docs/llm-wiki/wiki/concepts/lessons.md`:
@@ -1019,7 +1273,7 @@ sources: []
 # Lessons (counted)
 
 Format and promotion rule: see `docs/llm-wiki/CLAUDE.md` → "lessons.md format". Entries are added by `/finish-task`.
-`count ≥ 3` → the weekly `harness-improve` routine opens a proposal PR. Promoted or dropped entries move below the line.
+`count ≥ 3` → the weekly `harness-improve` routine opens a proposal (a PR, or an issue for `.claude/rules|hooks`) and marks the entry `proposed`. Promoted or dropped entries move below the line.
 
 ## Open
 
@@ -1056,7 +1310,7 @@ description: Ingest decisions, deliverables and reusable know-how from the curre
    Concepts merge into existing pages (update `updated:` and `sources:`); contradictions get `⚠️ (superseded)`.
 6. Index + links: register new pages (date first), ensure ≥1 inbound link.
 7. Log: `## [YYYY-MM-DD] ingest | <title> → N updated, M created` in `docs/llm-wiki/log.md`.
-8. Stage `docs/llm-wiki` so the push gate sees it; the caller commits with /commit.
+8. Stage `docs/llm-wiki` so the push gate sees it; the caller commits with /gated-commit.
 English only. Cite measured evidence; record failed attempts too.
 ```
 
@@ -1109,67 +1363,114 @@ git commit -m "docs: add repo-local LLM wiki schema, index, counted lessons and 
 
 **Files:**
 - Create: `scripts/guards.sh`, `.githooks/pre-push`
+- Modify: `.gitattributes` (union merge for the two append-only shared files)
+
+Both gates judge what the pushed branch adds since it left `main`. `guards.sh` reduces any base to the merge-base of base and head (files `main` gained after the fork never read as deleted), and the hook passes the branch's merge-base with `origin/main` on every push, never the remote tip. Pushes to `main` are refused outright. The wiki gate counts a change under `docs/llm-wiki/wiki/` other than `concepts/lessons.md` (`/finish-task` edits that file on every branch), or a `Wiki-Skip: <reason>` trailer, and blocks only when the range touches `platform/`, `apps/`, `ingestion/`, `bootstrap/`, `.claude/`, `.githooks/`, `.github/`, `scripts/`, `config/detekt/`, `gradle/`, `CLAUDE.md`, `REVIEW.md` or a root `*.gradle.kts`.
 
 - [ ] **Step 1: Write `scripts/guards.sh` (fail-closed constitution guards)**
 
 ```bash
 #!/usr/bin/env bash
-# guards.sh [<base> <head>] — constitution guards over a commit range (default origin/main..HEAD). Fail-closed.
-# Exit 0 = pass. Each failure prints WHAT is wrong and HOW to fix it (the message is an instruction to the agent).
+# guards.sh [<base> <head>] — constitution guards over what <head> adds since it left <base> (default origin/main..HEAD):
+# diffs start at their merge-base, so files main gained after the fork never read as deleted. Fail-closed.
+# Exit 0 = pass, 1 = violation, 2 = cannot judge (not a checkout, a ref that does not resolve or shares no history with
+# the other, a failing git command). Each failure prints WHAT is wrong and HOW to fix it (an instruction to the agent).
 set -uo pipefail
-ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
-LOG="$ROOT/.claude/hooks/log-gate-event.sh"
-BASE="${1:-origin/main}"; HEAD_="${2:-HEAD}"
-git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null || BASE="$(git -C "$ROOT" rev-list --max-parents=0 "$HEAD_" | tail -1)"
-RANGE="$BASE..$HEAD_"
+# Check pipelines end in a reader that consumes all input (grep ... >/dev/null, never grep -q): under pipefail an early
+# exit kills the writer with SIGPIPE on a large diff or log, and a match would read as a miss.
+# ROOT: the script's own checkout, else the working directory (CI runs the base commit's copy from outside the
+# checkout). GIT_DIR is dropped for that lookup only: git exports it to hooks in a worktree, and with it set
+# 'git -C <dir> rev-parse --show-toplevel' answers <dir> itself, so the event log path would point nowhere.
+ROOT="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null)" \
+  || { echo "guards: not inside a git checkout" >&2; exit 2; }
+# GUARDS_LOGGER replaces the event logger: CI sets it to 'true', so the checkout's hook script (PR code) never runs there.
+LOG="${GUARDS_LOGGER:-$ROOT/.claude/hooks/log-gate-event.sh}"
+die() { echo "guards: $1" >&2; exit 2; }
+BASE="${1:-refs/remotes/origin/main}"; HEAD_="${2:-HEAD}"
+# No fallback base: the root commit made the range all of history and blamed files nobody touched.
+for ref in "$BASE" "$HEAD_"; do
+  git -C "$ROOT" rev-parse --verify -q "$ref^{commit}" >/dev/null || die "cannot resolve '$ref' — run: git fetch origin main"
+done
+RANGE="$BASE..$HEAD_"   # as given, for messages and git log (a log range already stops where the two histories meet)
+BASE="$(git -C "$ROOT" merge-base "$BASE" "$HEAD_")" || die "$RANGE has no merge-base — run: git fetch origin main"
 fail=0
 violation() { echo "✖ $1"; echo "  → $2"; "$LOG" pre-push-guard "$3" "$1"; fail=1; }
+# Content diffs are raw text whatever the repository says: a PR's '.gitattributes' with '*.kt -diff' (or a textconv,
+# an external diff or color.diff=always) would otherwise hide added lines from checks 3, 6, 7 and 9.
+DIFF=(--text --no-color --no-ext-diff --no-textconv)
+# A trailer counts only with a reason after the colon ('Test-Change:' alone excuses nothing).
+trailer() { printf '%s\n' "$messages" | grep -E "^$1:[[:space:]]*[^[:space:]]" >/dev/null; }
 
-changed="$(git -C "$ROOT" diff --name-only "$BASE" "$HEAD_")"
+changed="$(git -C "$ROOT" diff --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
 [ -z "$changed" ] && { echo "guards: empty range, pass"; exit 0; }
+messages="$(git -C "$ROOT" log --format=%B "$RANGE")" || die "git log $RANGE failed"
 
-# 1. Deleted test files
-deleted_tests="$(git -C "$ROOT" diff --diff-filter=D --name-only "$BASE" "$HEAD_" | grep -E 'src/(test|itest|archTest)/.*\.kt$' || true)"
-[ -n "$deleted_tests" ] && violation "test files deleted: $(echo "$deleted_tests" | tr '\n' ' ')" \
-  "Restore them. If a test is genuinely obsolete, explain in the commit body and add the trailer 'Test-Change: <reason>'." deleted-test-file
-if [ -n "$deleted_tests" ] && git -C "$ROOT" log --format=%B "$RANGE" | grep -q '^Test-Change:'; then fail=0; echo "  (Test-Change trailer present — deletion accepted)"; fi
+# 1. Deleted test files without a Test-Change trailer (with the trailer the deletion is accepted and nothing is logged)
+deleted="$(git -C "$ROOT" diff --diff-filter=D --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
+deleted_tests="$(echo "$deleted" | grep -E 'src/(test|itest|archTest)/.*\.kt$' || true)"
+if [ -n "$deleted_tests" ] && ! trailer Test-Change; then
+  violation "test files deleted: $(echo "$deleted_tests" | tr '\n' ' ')" \
+    "Restore them. If a test is genuinely obsolete, explain in the commit body and add the trailer 'Test-Change: <reason>'." deleted-test-file
+elif [ -n "$deleted_tests" ]; then
+  echo "  (Test-Change trailer present — deletion accepted)"
+fi
 
-# 2. Net assertion decrease without Test-Change trailer
-count_asserts() { git -C "$ROOT" grep -c -E 'assertThat\(|assertThrows|assertThatThrownBy|assertTrue\(|assertFalse\(|assertEquals\(' "$1" -- '*/src/test/*' '*/src/itest/*' '*/src/archTest/*' 2>/dev/null | awk -F: '{s+=$2} END {print s+0}'; }
-before="$(count_asserts "$BASE")"; after="$(count_asserts "$HEAD_")"
-if [ "$after" -lt "$before" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | grep -q '^Test-Change:'; then
+# 2. Net assertion decrease without Test-Change trailer (git grep exits 1 when nothing matches; 2 or more is a failure)
+count_asserts() {
+  local out
+  out="$(git -C "$ROOT" grep --text -c -E 'assertThat\(|assertThrows|assertThatThrownBy|assertTrue\(|assertFalse\(|assertEquals\(' "$1" -- '*/src/test/*' '*/src/itest/*' '*/src/archTest/*')"
+  [ $? -le 1 ] || die "git grep $1 failed"
+  printf '%s\n' "$out" | awk -F: '{s+=$NF} END {print s+0}'
+}
+before="$(count_asserts "$BASE")" || exit 2; after="$(count_asserts "$HEAD_")" || exit 2
+if [ "$after" -lt "$before" ] && ! trailer Test-Change; then
   violation "assertions decreased $before → $after" "Restore the assertions, or justify with a 'Test-Change: <reason>' trailer." assertion-decrease
 fi
 
 # 3. New suppression in any Kotlin or Java source, tests included: @Suppress, @file:Suppress, @SuppressWarnings, @[Suppress(...)]
-if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java' | grep -E '^\+.*Suppress(Warnings)?\(' >/dev/null; then
+src_diff="$(git -C "$ROOT" diff "${DIFF[@]}" "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java')" || die "git diff $RANGE failed"
+if printf '%s\n' "$src_diff" | grep -E '^\+.*Suppress(Warnings)?\(' >/dev/null; then
   violation "new suppression under src/ (@Suppress, @file:Suppress, @SuppressWarnings or @[Suppress(...)])" "Fix the reported issue instead of suppressing it: a suppression hides findings in tests as much as in production code. The array form @[Suppress(...)] counts too: detekt honours it and ktfmt keeps it. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
 fi
 
 # 4. detekt baseline files (detekt 2.x names them per source set, e.g. detekt-baseline-main.xml)
-if echo "$changed" | grep -qE 'detekt-baseline[^/]*\.xml$'; then
+if echo "$changed" | grep -E 'detekt-baseline[^/]*\.xml$' >/dev/null; then
   violation "detekt baseline file added" "Delete it. Baselines hide debt from the gates (CLAUDE.md Forbidden)." detekt-baseline
 fi
 
 # 5. Merged migrations edited (modified, not added)
-edited_mig="$(git -C "$ROOT" diff --diff-filter=M --name-only "$BASE" "$HEAD_" | grep -E 'db/migration/V.*\.sql$' || true)"
+modified="$(git -C "$ROOT" diff --diff-filter=M --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
+edited_mig="$(echo "$modified" | grep -E 'db/migration/V.*\.sql$' || true)"
 [ -n "$edited_mig" ] && violation "merged migration edited: $(echo "$edited_mig" | tr '\n' ' ')" \
   "Revert the edit and add a new V<yyyyMMdd>_<hhmm>__<slug>.sql that fixes forward." migration-edited
 
-# 6. Hangul in committed artifacts (English-only, D1) — README.ko.md is the sole exception.
-#    Portable byte-range match (macOS grep has no -P): UTF-8 lead bytes EA–ED cover U+A000–U+D7FF incl. Hangul syllables.
-hangul="$(echo "$changed" | grep -v -E '^README\.ko\.md$|^docs/research/' | while read -r f; do
-  [ -f "$ROOT/$f" ] && LC_ALL=C grep -l -E $'[\xEA-\xED][\x80-\xBF][\x80-\xBF]' "$ROOT/$f" 2>/dev/null; done || true)"
-[ -n "$hangul" ] && violation "Korean text in: $(echo "$hangul" | tr '\n' ' ')" \
+# 6. Hangul added to committed artifacts or written in the range's commit messages (English-only, D1) — README.ko.md
+#    is the sole exception. Only lines the range adds count: a file that already holds Korean (Plan A embeds
+#    README.ko.md) stays editable. awk tags each added line with its file ('+++ <path>' header; -M keeps a pure rename
+#    free of added lines), grep matches. Portable byte-range match (macOS grep has no -P): UTF-8 lead bytes EA–ED cover
+#    U+A000–U+D7FF incl. Hangul syllables; E3 84–86 the compatibility jamo; E1 84–87 the Hangul Jamo block.
+HANGUL=$'([\xEA-\xED][\x80-\xBF][\x80-\xBF]|\xE3[\x84-\x86][\x80-\xBF]|\xE1[\x84-\x87][\x80-\xBF])'
+added="$(git -C "$ROOT" diff "${DIFF[@]}" -M --no-prefix "$BASE" "$HEAD_" -- . ':(exclude)README.ko.md' ':(exclude)docs/research/')" \
+  || die "git diff $RANGE failed"
+hangul="$(printf '%s\n' "$added" \
+  | LC_ALL=C awk '/^diff --git /{h=1} h && /^\+\+\+ /{f=substr($0, 5)} /^@@/{h=0} !h && /^\+/{print f "\t" $0}' \
+  | LC_ALL=C grep -E $'\t\\+.*'"$HANGUL" | cut -f1 | sort -u || true)"
+[ -n "$hangul" ] && violation "Korean text added in: $(echo "$hangul" | tr '\n' ' ')" \
   "Committed artifacts are English (ADR D1). Translate, or move the text to the owner's central wiki." non-english
+if printf '%s\n' "$messages" | LC_ALL=C grep -E "$HANGUL" >/dev/null; then
+  violation "Korean text in a commit message of $RANGE" \
+    "Commit messages are English (ADR D1). Reword the commit (git commit --amend -F <file> for the last one)." non-english
+fi
 
 # 7. Secrets
-if git -C "$ROOT" diff "$BASE" "$HEAD_" | grep -E '^\+' | grep -qE 'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{36,}|xox[baprs]-[0-9A-Za-z-]{10,}'; then
+all_diff="$(git -C "$ROOT" diff "${DIFF[@]}" "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
+if printf '%s\n' "$all_diff" | grep -E '^\+' | grep -E 'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{36,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk-ant-[A-Za-z0-9_-]{20,}' >/dev/null; then
   violation "secret-like literal added" "Remove it, rotate the credential, load it from the environment." secret-literal
 fi
 
 # 8. New production .kt without any test change in the range (test pair)
-new_prod="$(git -C "$ROOT" diff --diff-filter=A --name-only "$BASE" "$HEAD_" | grep -E 'src/main/kotlin/.*\.kt$' | grep -v -E 'Module\.kt$|package-info' || true)"
+added_files="$(git -C "$ROOT" diff --diff-filter=A --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
+new_prod="$(echo "$added_files" | grep -E 'src/main/kotlin/.*\.kt$' | grep -v -E 'Module\.kt$|package-info' || true)"
 tests_touched="$(echo "$changed" | grep -E 'src/(test|itest|archTest)/' || true)"
 if [ -n "$new_prod" ] && [ -z "$tests_touched" ]; then
   violation "new production Kotlin without tests: $(echo "$new_prod" | tr '\n' ' ')" \
@@ -1178,7 +1479,8 @@ fi
 
 # 9. detekt touched outside the root build script: one module line (actions.clear(), which also drops
 #    DetektGateGuard, enabled = false, setSource(files())) would switch the gate off and still exit 0.
-detekt_lines="$(git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*.gradle.kts' ':(exclude)build.gradle.kts' | grep -E '^\+[^+]' | grep -E '[Dd]etekt' || true)"
+gradle_diff="$(git -C "$ROOT" diff "${DIFF[@]}" "$BASE" "$HEAD_" -- '*.gradle.kts' ':(exclude)build.gradle.kts')" || die "git diff $RANGE failed"
+detekt_lines="$(printf '%s\n' "$gradle_diff" | grep -E '^\+[^+]' | grep -E '[Dd]etekt' || true)"
 [ -n "$detekt_lines" ] && violation "detekt configured outside the root build.gradle.kts: $(echo "$detekt_lines" | head -3 | tr '\n' ' ')" \
   "detekt is configured only in the root build.gradle.kts (Plan A Task 3); move the change there in a harness ticket." detekt-outside-root
 
@@ -1191,7 +1493,7 @@ exit $fail
 ```bash
 #!/usr/bin/env bash
 # pre-push — constitution guards (fail-closed) then the wiki gate (fail-open with 'Wiki-Skip: <reason>' trailer).
-# Installed by .claude/hooks/inject-state.sh via core.hooksPath. Both halves log to .harness/events.jsonl.
+# Installed by .claude/hooks/inject-state.sh via core.hooksPath. Both halves log through .claude/hooks/log-gate-event.sh.
 set -u
 ROOT="$(git rev-parse --show-toplevel)"
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
@@ -1200,12 +1502,17 @@ Z40="0000000000000000000000000000000000000000"
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -z "${local_ref:-}" ] && continue
   case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac          # tags/notes pass
-  [ "$local_sha" = "$Z40" ] && continue                                 # deletions pass
-  if [ "$remote_sha" = "$Z40" ]; then
-    base="$(git merge-base origin/main "$local_sha" 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -1)"
-  else
-    base="$remote_sha"
+  if [ "$remote_ref" = refs/heads/main ]; then                          # main changes only through a reviewed PR
+    "$LOG" pre-push-guard push-to-main "$local_ref -> $remote_ref"
+    echo "✖ pushes to main are refused — push your branch and open a PR (/pull-request)." >&2
+    exit 1
   fi
+  [ "$local_sha" = "$Z40" ] && continue                                 # deletions pass
+  # Base = where the branch leaves main, on every push (never $remote_sha): after 'git merge origin/main'
+  # the old remote tip would pull other PRs' commits, trailers and deletions into the range. guards.sh reduces any
+  # base to that merge-base itself, so a direct run agrees with this hook. No merge-base → empty base → guards.sh
+  # falls back to origin/main and, if that does not resolve either, asks for a fetch.
+  base="$(git merge-base refs/remotes/origin/main "$local_sha" 2>/dev/null)"
 
   # --- guards: fail-closed ---
   if [ -x "$ROOT/scripts/guards.sh" ]; then
@@ -1219,25 +1526,36 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   # --- wiki gate: fail-open ---
-  if ! git diff --quiet "$base" "$local_sha" -- docs/llm-wiki/ 2>/dev/null; then
-    continue                                                            # wiki changed → fine
+  # concepts/lessons.md does not count: /finish-task edits it on every branch, so it would pass every range.
+  if ! git diff --quiet "$base" "$local_sha" -- docs/llm-wiki/wiki/ ':(exclude)docs/llm-wiki/wiki/concepts/lessons.md' 2>/dev/null; then
+    continue                                                            # wiki page or ADR changed → fine
   fi
-  if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:'; then
-    "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:')"
+  if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:[[:space:]]*[^[:space:]]'; then   # needs a reason
+    "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:[[:space:]]*[^[:space:]]')"
     continue
   fi
-  # code-only ranges without decisions are common; block only when the range touched source or harness
-  if git diff --name-only "$base" "$local_sha" | grep -qE '^(platform|apps|ingestion|bootstrap|\.claude|\.githooks|scripts|CLAUDE\.md)'; then
+  # code-only ranges without decisions are common; block only when the range touched source, harness, CI, the review
+  # contract, detekt config or the root build (root *.gradle.kts, gradle/)
+  if git diff --name-only "$base" "$local_sha" | grep -qE '^(platform|apps|ingestion|bootstrap|\.claude|\.githooks|\.github|scripts|config/detekt|gradle/|CLAUDE\.md|REVIEW\.md|[^/]+\.gradle\.kts$)'; then
     "$LOG" wiki-gate blocked-no-wiki-change "$remote_ref"
-    echo "🛑 wiki gate: this range changes code or harness but docs/llm-wiki/ is untouched." >&2
-    echo "   Run /wiki-ingest (decisions → ADR, lessons → lessons.md), or add a commit trailer 'Wiki-Skip: <reason>' if truly nothing was decided." >&2
+    echo "🛑 wiki gate: this range changes code, harness, CI or build files but no file under docs/llm-wiki/wiki/ (concepts/lessons.md alone does not count)." >&2
+    echo "   Run /wiki-ingest (each decision → an ADR in docs/llm-wiki/wiki/decisions/), or add a commit trailer 'Wiki-Skip: <reason>' if truly nothing was decided." >&2
     exit 1
   fi
 done
 exit 0
 ```
 
-- [ ] **Step 3: Install, test the gates with real input, commit**
+- [ ] **Step 3: Union-merge the append-only shared files**
+
+Parallel PRs each append to `.harness/events.jsonl` and `.harness/state/progress.md`; git's built-in `union` merge driver keeps the lines of both sides instead of raising a conflict. Append to `.gitattributes` (from Plan A):
+
+```text
+.harness/events.jsonl merge=union
+.harness/state/progress.md merge=union
+```
+
+- [ ] **Step 4: Install, test the gates with real input, commit**
 
 ```bash
 chmod +x /Users/yu-sun00/Desktop/vera/scripts/guards.sh /Users/yu-sun00/Desktop/vera/.githooks/pre-push
@@ -1248,21 +1566,45 @@ git -C /Users/yu-sun00/Desktop/vera config core.hooksPath .githooks
 
 Expected: `guards: pass (...)`, `exit=0`; test-hooks all `PASS`, `exit=0`.
 
-Negative test (must fail, then undo):
+Negative test (must fail, then undo). It runs on the work branch with the new files still unstaged, so the probe commit holds only the deletion:
 
 ```bash
 git -C /Users/yu-sun00/Desktop/vera switch -c tmp/guard-negative
 git -C /Users/yu-sun00/Desktop/vera rm -q platform/metadata/src/test/kotlin/com/brokenfinger/vera/metadata/domain/TableNameTest.kt
-git -C /Users/yu-sun00/Desktop/vera commit -qm "test: negative guard probe"
-/Users/yu-sun00/Desktop/vera/scripts/guards.sh main HEAD; echo exit=$?
-git -C /Users/yu-sun00/Desktop/vera switch -q main && git -C /Users/yu-sun00/Desktop/vera branch -qD tmp/guard-negative
+printf 'test: negative guard probe\n' | git -C /Users/yu-sun00/Desktop/vera commit -q -F -
+/Users/yu-sun00/Desktop/vera/scripts/guards.sh chore/phase-0-b-harness HEAD; echo exit=$?
+git -C /Users/yu-sun00/Desktop/vera switch -q chore/phase-0-b-harness && git -C /Users/yu-sun00/Desktop/vera branch -qD tmp/guard-negative
 tail -2 /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
 ```
 
 Expected: two `✖` lines (`test files deleted`, `assertions decreased`), `exit=1`, and two `pre-push-guard` events in the log. Keep those two events: they are the first real evidence of a gate firing.
 
+Since Task 3 moved the gate-event log out of the tracked file, a re-run of this probe appends to the shared log `<git common dir>/vera-events.jsonl`, and `tail -2 .harness/events.jsonl` shows only what `scripts/publish-events.sh` has copied. The four probe lines published on 2026-10-02 carry `"probe":true` (the weekly routine skips them) and stay as the record.
+
+The same deletion with a `Test-Change:` trailer is accepted and logs nothing:
+
 ```bash
-git add scripts/guards.sh .githooks/pre-push .harness/events.jsonl
+git -C /Users/yu-sun00/Desktop/vera switch -c tmp/guard-trailer
+git -C /Users/yu-sun00/Desktop/vera rm -q platform/metadata/src/test/kotlin/com/brokenfinger/vera/metadata/domain/TableNameTest.kt
+printf 'test: trailer guard probe\n\nTest-Change: probe\n' | git -C /Users/yu-sun00/Desktop/vera commit -q -F -
+wc -l < /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
+/Users/yu-sun00/Desktop/vera/scripts/guards.sh chore/phase-0-b-harness HEAD; echo exit=$?
+wc -l < /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
+git -C /Users/yu-sun00/Desktop/vera switch -q chore/phase-0-b-harness && git -C /Users/yu-sun00/Desktop/vera branch -qD tmp/guard-trailer
+```
+
+Expected: `(Test-Change trailer present — deletion accepted)`, `guards: pass (...)`, `exit=0`, the same line count twice.
+
+The push gate itself, run from the repository root with the stdin line git sends for the first push of this branch:
+
+```bash
+printf '%s %s %s %s\n' refs/heads/chore/phase-0-b-harness "$(git -C /Users/yu-sun00/Desktop/vera rev-parse HEAD)" refs/heads/chore/phase-0-b-harness 0000000000000000000000000000000000000000 | /Users/yu-sun00/Desktop/vera/.githooks/pre-push origin https://github.com/BrokenFinger98/vera.git; echo exit=$?
+```
+
+Expected: `guards: pass (...)`, `exit=0` (the branch adds ADRs under `docs/llm-wiki/wiki/decisions/`).
+
+```bash
+git add scripts/guards.sh .githooks/pre-push .gitattributes .harness/events.jsonl
 git commit -m "chore: add fail-closed constitution guards and pre-push wiki gate"
 ```
 
@@ -1287,6 +1629,8 @@ git commit -m "chore: add fail-closed constitution guards and pre-push wiki gate
 /scripts/                  @BrokenFinger98
 /docs/llm-wiki/wiki/decisions/  @BrokenFinger98
 /config/detekt/            @BrokenFinger98
+# Attributes decide how diffs and merges treat files (guards.sh diffs with --text; merge drivers still apply).
+/.gitattributes            @BrokenFinger98
 # Build scripts can switch a gate off in one line (guards.sh check 9 is the machine half).
 /build.gradle.kts          @BrokenFinger98
 *.gradle.kts               @BrokenFinger98
@@ -1323,11 +1667,11 @@ Reviewer / critic findings and disposition:
 ## Definition of Done
 - [ ] Every acceptance criterion in the issue has a test
 - [ ] `check.sh` and `itest.sh` output above, exit 0
-- [ ] Only the owned module changed (or split rationale below)
-- [ ] ≤ 400 changed lines, one behaviour change
-- [ ] Test changes explained; `Test-Change:` trailer if assertions changed; label `test-change` if `src/test|itest|archTest` touched
+- [ ] Only the owned module changed, plus the always-allowed files in CLAUDE.md (or split rationale below)
+- [ ] ≤ 400 changed lines (`.harness/events.jsonl` excluded), one behaviour change
+- [ ] `Test-Change:` trailer if tests were deleted or assertions reduced; label `test-change` if `src/test|itest|archTest` touched
 - [ ] ADR / module spec updated, or "no decision made"
-- [ ] `.harness/state/progress.md` updated in this branch
+- [ ] `.harness/state/progress.md` updated in this branch (issue `#<n>`)
 - [ ] Rollback: <migration reversal or "plain revert suffices">
 - [ ] Owner design review: module boundaries · domain language · ADR needed? · migration reversible · no PII in logs
 ```
@@ -1336,7 +1680,7 @@ Reviewer / critic findings and disposition:
 
 ```yaml
 name: Task
-description: One behaviour change, one PR, ≤400 lines. Filled by /issue.
+description: One behaviour change, one PR, ≤400 lines (.harness/events.jsonl excluded). Filled by /ticket.
 labels: ["task"]
 body:
   - type: input
@@ -1353,7 +1697,7 @@ body:
       value: |
         - Spec:
         - ADR:
-        - Owned module:
+        - Owned module (Modulith module + Gradle project, or `harness` for gate/hook/workflow work):
         - Blocked by:   Blocks:
     validations:
       required: true
@@ -1378,7 +1722,7 @@ body:
       label: Verify (commands the agent must run)
       value: |
         - ./scripts/check.sh
-        - ./scripts/itest.sh :<module>
+        - ./scripts/itest.sh
     validations:
       required: true
   - type: textarea
@@ -1393,7 +1737,7 @@ body:
 blank_issues_enabled: false
 ```
 
-- [ ] **Step 2: Write `test-guard.yml`**
+- [ ] **Step 2: Write `test-guard.yml` (test-change label, constitution guards as a required check)**
 
 ```yaml
 name: test-guard
@@ -1406,6 +1750,8 @@ permissions:
   contents: read
   pull-requests: read
 
+# base.sha is the base branch tip, not where the PR left it: both jobs diff from the merge-base,
+# so commits merged into main after the PR branched never count as changes of this PR.
 jobs:
   label-required-when-tests-change:
     runs-on: ubuntu-latest
@@ -1420,14 +1766,40 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E 'src/(test|itest|archTest)/' || true)"
+          BASE="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          changed="$(git diff --name-only "$BASE" "$HEAD_SHA" | grep -E 'src/(test|itest|archTest)/' || true)"
           if [ -z "$changed" ]; then echo "no test sources changed"; exit 0; fi
           labels="$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name')"
           if echo "$labels" | grep -qx 'test-change'; then echo "label present"; exit 0; fi
           echo "::error::Test sources changed but label 'test-change' is missing. Explain the test change in the PR and add the label."
           echo "$changed"
           exit 1
+
+  guards:
+    name: guards (constitution, fail-closed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0    # full history: a shallow clone has no merge-base, and guards.sh reads an empty range as a pass
+      # The pre-push hook runs the same script; this required check also covers pushes that skipped the hook.
+      # It runs the base commit's copy, so a PR that weakens scripts/guards.sh cannot pass its own check.
+      - name: Run the base commit's scripts/guards.sh over the PR range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          BASE="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          guards="$RUNNER_TEMP/guards.sh"
+          if ! git show "$BASE:scripts/guards.sh" > "$guards" 2>/dev/null; then
+            echo "::notice::The base commit has no scripts/guards.sh; running the PR's own copy."
+            guards=scripts/guards.sh
+          fi
+          # The checkout's .claude/hooks/log-gate-event.sh is PR code; GUARDS_LOGGER=true makes event logging a no-op.
+          GUARDS_LOGGER=true bash "$guards" "$BASE" "$HEAD_SHA"
 ```
+
+The guards job runs the merge-base's copy of `scripts/guards.sh` from `$RUNNER_TEMP`, so a PR that weakens the script cannot pass its own required check; only the PR that introduces the script, whose base has none, runs its own copy.
 
 - [ ] **Step 3: Write `claude-review.yml`**
 
@@ -1446,7 +1818,8 @@ permissions:
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false
+    # A fork PR gets no id-token for the action, so the job could only fail there.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1454,22 +1827,31 @@ jobs:
           fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # harness-improve opens its PRs as claude[bot]; the action fails runs started by bots it does not list.
+          allowed_bots: claude
           prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
             Review this pull request under the contract in REVIEW.md. Read CLAUDE.md for the immutable
-            decisions and the forbidden list, and the linked issue for the acceptance criteria.
-            Report only correctness, requirement, security and boundary findings, grouped by severity,
-            with path:line, one sentence each. End with "verdict: approve" or "verdict: request-changes".
-            Post the result as a pull request review.
-          claude_args: "--max-turns 20"
+            decisions and the forbidden list, and the linked issue for the acceptance criteria
+            ("Closes #<n>" in the PR body; read it with gh issue view <n>). Read the change with gh pr view
+            and gh pr diff. The action restores CLAUDE.md and .claude/ from the base branch before you start;
+            the PR's own versions are in the diff and under .claude-pr/.
+            Report only correctness, requirement, security and boundary findings.
+            Post each finding as an inline comment on its line with mcp__github_inline_comment__create_inline_comment:
+            the severity, then one sentence.
+            Then post ONE summary comment with gh pr comment: the findings grouped by severity, with path:line,
+            one sentence each, ending with the line "verdict: approve" or "verdict: request-changes".
+          claude_args: |
+            --max-turns 20
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue view:*)"
 ```
 
-Before committing, confirm the action's input names against its current `action.yml`:
+`allowed_bots: claude` lets the review run on the routine's PRs: harness-improve opens them as `claude[bot]`, and the action fails any run started by a bot it does not list (it compares names without the `[bot]` suffix).
 
-Run: `curl -s https://raw.githubusercontent.com/anthropics/claude-code-action/main/action.yml | grep -E '^  [a-z_]+:' | head -30`
-Expected: the list includes `prompt`, `anthropic_api_key` and `claude_args`. If names differ, adapt the `with:` block to the printed names and note it in progress.md.
-
-- [ ] **Step 4: Write `harness-improve.yml` (weekly promote, monthly prune — proposal PRs only)**
+- [ ] **Step 4: Write `harness-improve.yml` (weekly promote, monthly prune — proposal PRs and issues only)**
 
 ```yaml
 name: harness-improve
@@ -1477,7 +1859,7 @@ name: harness-improve
 on:
   schedule:
     - cron: '0 21 * * 0'    # Monday 06:00 KST — weekly promotion pass
-    - cron: '0 22 1 * *'    # 1st of month 07:00 KST — monthly prune pass
+    - cron: '0 22 1 * *'    # 2nd of month 07:00 KST (22:00 UTC on the 1st) — monthly prune pass
   workflow_dispatch:
     inputs:
       mode:
@@ -1488,6 +1870,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: read
+  actions: read
   id-token: write
 
 jobs:
@@ -1497,6 +1880,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # The repo's .claude/settings.json hooks run inside the action: the Stop gate runs check.sh on source changes.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v6
       - name: Decide mode
         id: mode
         env:
@@ -1509,39 +1898,81 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: "--max-turns 40"
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # gh runs on the action's GitHub App token; gh run list (CI failures) needs actions: read on it.
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(./scripts/check.sh),Bash(jq:*)"
+            --allowedTools "Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*)"
+            --allowedTools "Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+            --allowedTools "Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh issue create:*),Bash(gh issue list:*),Bash(gh run list:*)"
           prompt: |
             You run the Vera self-improvement loop (docs/superpowers/specs/2026-09-30-vera-dev-environment-design.md §10.1).
-            Mode: ${{ steps.mode.outputs.mode }}. You may open pull requests; you MUST NOT merge anything.
+            Mode: ${{ steps.mode.outputs.mode }}. You may open pull requests and issues; you MUST NOT merge anything.
 
             Read .harness/events.jsonl, docs/llm-wiki/wiki/concepts/lessons.md, CLAUDE.md, .claude/rules/*.md,
             config/detekt/detekt.yml, scripts/guards.sh, .claude/hooks/*.sh.
+            Counting events: count unique lines only, and skip lines with "probe": true (deliberate gate tests).
+            Commands: run git and ./scripts/check.sh from the repository root exactly in the allowed forms (git status,
+            ./scripts/check.sh) — no git -C and no absolute paths, unlike CLAUDE.md asks of local sessions: the allowed
+            tool patterns match only these forms.
+
+            Proposal rules:
+              - Skip an item that already has an open PR or issue (gh pr list, gh issue list).
+              - Claude Code denies your writes under .claude/ in this run, so a proposal that touches .claude/rules/ or
+                .claude/hooks/ is ONE issue: label harness, title "harness: promote <slug>" (prune: "harness: prune <yyyymmdd>"),
+                body = the task template (sections Goal, Context, Acceptance criteria (EARS), Non-goals, Verify, Risks / Rollback;
+                owned module harness) with the evidence and the exact patch as a fenced diff inside Context, applied
+                later in a local ticket session.
+                Every other proposal is a pull request.
+              - A pull request gets its own branch from origin/main, named harness/promote-<slug> or harness/prune-<yyyymmdd>
+                (CLAUDE.md exempts these branches from the issue rule), label harness, plus test-change when it touches
+                src/test, src/itest or src/archTest.
+              - Every commit either changes a page under docs/llm-wiki/wiki/ other than concepts/lessons.md or carries the
+                trailer "Wiki-Skip: harness-improve proposal" (the pre-push gate checks this).
+              - Before committing a change to Kotlin, Gradle or detekt files, run ./scripts/check.sh and put its RESULT lines
+                in the PR body (the Stop gate does not cover committed changes).
+              - Write commit messages and PR and issue bodies to files under build/harness-improve/ (git ignores build/) and
+                pass them with git commit -F and --body-file. No AI attribution in commits, PRs or issues.
 
             If mode is promote:
               - Find lessons with count >= 3 and status open, and gate rules that fired >= 3 times for the same cause in the last 30 days.
-              - For EACH such item open exactly ONE pull request on a branch harness/promote-<slug> proposing exactly one of:
-                a CLAUDE.md line, a .claude/rules/<file>.md entry, a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test.
-                Cite the event lines and lesson entry in the PR body. Mark the lesson status: promoted (pending) in the same PR.
-              - If nothing qualifies, do nothing and print "promote: nothing due".
+              - For EACH such item open exactly ONE proposal for exactly one of: a CLAUDE.md line, a .claude/rules/<file>.md entry,
+                a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test. Cite the event lines and lesson entry, and mark
+                the lesson "status: proposed" with the pull request or issue link, in the same pull request or in the issue's patch.
+              - Append this week's metrics line to .harness/metrics.md with exactly the columns of its header row, computed from
+                git log, .harness/events.jsonl, gh pr list --state merged and gh run list. It goes into the first promote pull
+                request, or, when nothing else is due, into its own pull request on branch harness/promote-metrics-<yyyymmdd>.
+              - If no lesson or rule qualifies, print "promote: nothing due" after adding the metrics line.
             If mode is prune:
               - List every rule, hook pattern and CLAUDE.md line that has zero related events in .harness/events.jsonl for the last 30 days
-                and is not marked "keep:" with a reason. Run /wiki-lint and /doctor-style checks on CLAUDE.md for derivable content.
-              - Open ONE pull request on branch harness/prune-<yyyymmdd> proposing the deletions, one bullet per item with the evidence
-                (no firing in 30 days). Never delete block-danger patterns for destructive commands.
-              - Append a weekly metrics line to .harness/metrics.md (merged PRs, gate firings by rule, critic blocking count, CI failures)
-                computed from git log, events.jsonl and gh pr list --state merged.
+                and is not marked "keep:" with a reason. Run the checks in .claude/skills/wiki-lint/SKILL.md and check CLAUDE.md
+                for content derivable from code.
+              - Propose the deletions in ONE pull request on branch harness/prune-<yyyymmdd> (those under .claude/ in ONE issue),
+                one bullet per item with the evidence (no firing in 30 days). Never delete block-danger patterns for destructive commands.
             Write in English. Keep each PR under 100 changed lines.
 ```
 
-- [ ] **Step 5: Add the API key secret and commit**
+Proposals that touch `.claude/rules/` or `.claude/hooks/` are issues because Claude Code never auto-approves writes under `.claude/` in the action's headless default mode: allow rules and `acceptEdits` leave them denied, only `bypassPermissions` would pass them, and the owner keeps that mode out of CI.
 
-Run: `gh secret set ANTHROPIC_API_KEY --repo BrokenFinger98/vera` (paste the key interactively — the owner does this step; the agent must never handle the key value).
-Expected: `✓ Set Actions secret ANTHROPIC_API_KEY`.
+Before committing, check the inputs both Claude workflows use against the action's current `action.yml`, then parse every template and workflow:
+
+Run: `curl -sL https://raw.githubusercontent.com/anthropics/claude-code-action/main/action.yml | grep -E '^  (prompt|claude_code_oauth_token|claude_args|additional_permissions|allowed_bots):'`
+Expected: five lines. If one is missing, adapt the `with:` blocks to the current input names and note it in progress.md.
+
+Run: `python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]; print("yaml ok")' .github/ISSUE_TEMPLATE/*.yml .github/workflows/*.yml`
+Expected: `yaml ok`.
+
+- [ ] **Step 5: Owner — install the Claude GitHub App and set the OAuth token secret; commit**
+
+The owner runs the setup and the agent never handles the token value. Install https://github.com/apps/claude on `BrokenFinger98/vera` (the action trades the job's OIDC token for the App's installation token), then run `claude setup-token` locally and `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo BrokenFinger98/vera`, pasting the token at the prompt.
+Expected: `gh secret list --repo BrokenFinger98/vera` lists `CLAUDE_CODE_OAUTH_TOKEN`. Neither Claude workflow runs on the PR that adds it: the action skips a workflow that is not on the default branch yet. PR #4 opens before this setup, which must be done before the Task 13 acceptance run and before the first scheduled `harness-improve` run (Mon 2026-10-05 06:00 KST).
 
 ```bash
 git add .github
-git commit -m "ci: add test-change guard, Claude PR review and harness-improve routine; PR and issue templates"
+git commit -m "ci: add PR guards, Claude PR review and the harness-improve routine; PR and issue templates"
 ```
 
 ---
@@ -1549,6 +1980,7 @@ git commit -m "ci: add test-change guard, Claude PR review and harness-improve r
 ### Task 9: The three saved fan-out workflows (D8)
 
 Workflow scripts use the Dynamic Workflows API (`meta`, `agent()`, `parallel()`, `pipeline()`). Load the `workflow-authoring` skill before executing this task and adjust only API details if the reference differs; the shape below is the contract.
+Runtime behaviour verified 2026-10-02: `agent()` returns null when its agent dies or is skipped, `parallel()` resolves a failed thunk to null and a `pipeline()` stage that throws drops its item to null, so every result is null-guarded before it is dereferenced. `meta` must be a pure literal, and scripts are plain JavaScript without `Date.now()`, `Math.random()` or an argless `new Date()`.
 
 **Files:**
 - Create: `.claude/workflows/audit-consistency.js`, `.claude/workflows/release-review.js`, `.claude/workflows/deep-research.js`
@@ -1590,6 +2022,9 @@ const inventory = await agent(
   'List every HTTP endpoint (controller class, method, path) under **/internal/web/** in this repository. Return JSON {"endpoints":[{"file":"","method":"","path":""}]}.',
   { label: 'inventory', phase: 'Inventory', schema: { type: 'object', properties: { endpoints: { type: 'array', items: { type: 'object', properties: { file: { type: 'string' }, method: { type: 'string' }, path: { type: 'string' } }, required: ['file', 'method', 'path'] } } }, required: ['endpoints'] } },
 )
+if (!inventory) {
+  return { error: 'The inventory agent returned nothing, so no endpoint was audited. Run the workflow again.' }
+}
 
 const results = await pipeline(
   inventory.endpoints,
@@ -1597,7 +2032,7 @@ const results = await pipeline(
     `Audit endpoint ${e.method} ${e.path} in ${e.file}. Check: (1) every query it triggers goes through the query module so ACL conditions are injected; (2) table/field names come from TableName/FieldName value objects; (3) metadata reads and writes happen in one transaction. Report findings with file:line and evidence. No style comments.`,
     { label: `audit:${e.path}`, phase: 'Audit', schema: FINDINGS },
   ),
-  (audit) => parallel(audit.findings.map((f) => () =>
+  (audit) => parallel(((audit && audit.findings) || []).map((f) => () =>
     agent(
       `Adversarially verify this finding by reading the code and, if possible, writing a throwaway test: ${JSON.stringify(f)}. Do not trust the auditor. Return isReal, a reproduction, and severity.`,
       { label: `verify:${f.title}`, phase: 'Verify', schema: VERDICT },
@@ -1625,8 +2060,8 @@ const FILE_FINDINGS = {
 }
 
 const files = (args && args.files) || []
-if (files.length === 0) {
-  return { error: 'Pass args.files: output of `git diff --name-only $(git describe --tags --abbrev=0)..HEAD -- "*.kt" "*.sql"`' }
+if (!Array.isArray(files) || files.length === 0) {
+  return { error: 'Pass args.files as a JSON array of paths, e.g. the lines of `git diff --name-only $(git describe --tags --abbrev=0)..HEAD -- "*.kt" "*.sql"`' }
 }
 
 const perFile = await parallel(files.map((file) => () =>
@@ -1635,11 +2070,15 @@ const perFile = await parallel(files.map((file) => () =>
     { label: `review:${file}`, phase: 'Review', schema: FILE_FINDINGS },
   ),
 ))
+const findings = perFile.filter(Boolean).flatMap((r) => r.findings)
 
 const ranked = await agent(
-  `Merge and rank these findings; drop duplicates; keep blocking first. Findings: ${JSON.stringify(perFile.flatMap((r) => r.findings))}. Return the same schema.`,
+  `Merge and rank these findings; drop duplicates; keep blocking first. Findings: ${JSON.stringify(findings)}. Return the same schema.`,
   { label: 'rank', phase: 'Rank', schema: FILE_FINDINGS },
 )
+if (!ranked) {
+  return { files: files.length, error: 'The rank agent returned nothing; the findings below are unranked.', findings }
+}
 return { files: files.length, findings: ranked.findings }
 ```
 
@@ -1662,17 +2101,22 @@ const reports = await parallel(angles.map((angle) => () =>
   agent(`Research: "${question}". Angle: ${angle}. Today is the current date; prefer sources from the last 12 months and date every claim. Return a summary and source URLs.`,
     { label: `research:${angle}`, phase: 'Research', schema: REPORT }),
 ))
+const delivered = reports.filter(Boolean)
+if (delivered.length === 0) return { error: 'All three researchers returned nothing, so there is nothing to synthesise. Run the workflow again.' }
 
 const synthesis = await agent(
-  `Synthesise these three reports into a decision memo with Options / Evidence / Recommendation / Accepted costs, in English, suitable as an ADR draft: ${JSON.stringify(reports)}`,
+  `Synthesise these reports into a decision memo with Options / Evidence / Recommendation / Accepted costs, in English, suitable as an ADR draft: ${JSON.stringify(delivered)}`,
   { label: 'synthesise', phase: 'Synthesise', schema: REPORT },
 )
-return synthesis
+return synthesis || { error: 'The synthesiser returned nothing; the research reports follow.', reports: delivered }
 ```
 
 - [ ] **Step 4: Validate against the reference and commit**
 
 Load the `workflow-authoring` skill and compare: `meta` literal, `agent(prompt, {label, phase, schema})`, `parallel(fns)`, `pipeline(items, stage1, stage2)`, `args`. Fix only naming differences.
+
+Syntax-check each file: copy it to a scratch file with `export ` removed from the `meta` line and the body wrapped in `(async () => { ... })()`, then run `node --check <copy>`.
+Expected: exit 0 for all three, and every `phase:` string in a file names one of its `meta.phases` titles.
 
 ```bash
 git add .claude/workflows
@@ -1700,7 +2144,7 @@ git commit -m "feat: add the three saved fan-out workflows (audit, release revie
 - #<n> <title>
 - EARS:
   - WHEN … THE SYSTEM SHALL …
-- Verify: ./scripts/check.sh · ./scripts/itest.sh :<module>
+- Verify: ./scripts/check.sh · ./scripts/itest.sh
 
 ## Owner's standing instructions
 - <things the agent must never re-ask>
@@ -1712,47 +2156,65 @@ git commit -m "feat: add the three saved fan-out workflows (audit, release revie
 # Goal (personal — gitignored)
 
 ## Where we are
-Phase 0 (environment and harness) is complete when the first metadata-engine ticket goes through the whole loop
-(issue → worktree → implement → gates → PR → review → squash) and every gate has fired at least once
-(`.harness/events.jsonl` has entries for stop-gate, pre-push-guard, wiki-gate, ci).
+Phase 0 (environment and harness) ends when the first harness ticket (a deferred hardening item, owned area `harness`)
+completes the whole loop (/ticket → worktree → implement → gates → PR → review → squash) and stop-gate, pre-push-guard,
+wiki-gate and ci events have each been published to `.harness/events.jsonl`. Phase 1 ticket 1 (the metadata engine) follows.
 
 ## Current ticket
-- Phase 1, ticket 1 (to be created with /issue): metadata engine — `sys_table` / `sys_field` system tables (Flyway),
+- Phase 0 exit: the first deferred harness-hardening ticket (owned area `harness`; candidates in progress.md), through the whole loop.
+- Then Phase 1, ticket 1 (to be created with /ticket): metadata engine — `sys_table` / `sys_field` system tables (Flyway),
   `TableDefinition` / `FieldDefinition` domain, and a create-table use case that inserts the definitions and runs
   `CREATE TABLE u_<name>` in one transaction.
 - EARS (draft, refine in /brainstorming):
   - WHEN a valid TableName and at least one FieldDefinition are submitted THE SYSTEM SHALL create the physical table and the catalog rows atomically
   - WHEN the physical DDL fails THE SYSTEM SHALL leave no catalog row behind
   - WHEN a TableName already exists THE SYSTEM SHALL reject with a conflict error and change nothing
-- Verify: ./scripts/check.sh · ./scripts/itest.sh :platform:metadata
+- Verify: ./scripts/check.sh · ./scripts/itest.sh (the Phase 1 design interview decides where module-level Spring tests live)
 
 ## Owner's standing instructions
 - The owner does not write code. Ask for decisions, not for implementations.
+- The owner approves three things per ticket: the preview, the design review and the merge (plus the spec for large features).
 - Never use employer code, designs, customer data or names.
 - English artifacts; Korean only in chat and README.ko.md.
 ```
 
-- [ ] **Step 2: Write `progress.md` with the Phase 0 record (fill the evidence from `git log` and the RESULT lines captured in Plan 0-A Task 12 Step 5)**
+`goal.md` is written but never committed: `git -C /Users/yu-sun00/Desktop/vera check-ignore .harness/state/goal.md` prints the path and exits 0. The Verify lines name no module because Spring context tests live in `:bootstrap` until Phase 1 decides a per-module test harness (CLAUDE.md, Quality gate).
+
+- [ ] **Step 2: Write `progress.md` with the Phase 0 record (evidence from Plan 0-A, `gh` and the job logs of the green CI run on main; the 0-B entry stays 🚧 until the Task 13 acceptance run)**
 
 ```markdown
 # Progress
 
-Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected into every session; move old entries below it.
+Entries start with the date. Everything above the archive marker (the HTML comment on the last line) is injected into every session; move old entries below it.
 
 ## [2026-09-30] Phase 0-A — repository, toolchain, PoCs ✅
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-a-repo-and-build.md`
-- Gradle 9.7.1 · Kotlin 2.3.21 · Boot 4.1.1 · Modulith 2.1.1 · PG 18 Testcontainers · detekt/ktfmt/ArchUnit/Kover
-- Evidence: `RESULT check exit=0` · `RESULT itest exit=0` · CI run green (paste run URL)
-- PoC 1 transactional DDL: pass · PoC 2 GraalJS sandbox: pass (js-isolate-community: <200|404>) · PoC 3 detekt/ArchUnit on Kotlin 2.3: <pass|finding> · PoC 4 kotlin-lsp: <pass|fallback>
+- Initial commit `295ffd1` (bootstrap pushed straight to main before the PR flow; never squashed, so the hash stays valid)
+- Gradle 9.7.1 · Kotlin 2.3.21 · Boot 4.1.1 · Modulith 2.1.1 · PG 18 Testcontainers · detekt 2.0.0-alpha.6 / ktfmt / ArchUnit / Kover
+- Evidence (CI run on main @ 3dd682d, check, itest, coverage and build all green: https://github.com/BrokenFinger98/vera/actions/runs/36801975950): `RESULT check exit=0 seconds=53` · `RESULT itest exit=0 seconds=71` · 37 unit, 5 archTest and 4 itest tests, 0 failed
+- PoC 1 transactional DDL: pass (a rolled-back CREATE TABLE leaves no table, a committed one is visible)
+- PoC 2 GraalJS sandbox: pass (js-isolate-community: 200; host access, IO, statement limit and wall clock enforced; no per-script heap cap on the stock JDK)
+- PoC 3 detekt/ArchUnit on Kotlin 2.3: finding, resolved — detekt 1.23.8 (Kotlin 2.0.21 compiler) crashed on JDK 25 and could not read Kotlin 2.3 metadata, so PR #3 moved to 2.0.0-alpha.6 (same 12 findings on the smoke sample); Konsist 0.17.3 has the same compiler, so ArchUnit 1.5.1 is used
+- PoC 4 kotlin-lsp: pass 2026-10-01 (first attempt blocked by outdated Command Line Tools; the plugin loads the server only at session start, so restart the session after installing it)
+- PR #1 (merged 2026-09-30T14:12Z) `test: give size-handling sandbox tests a CI-safe time budget` — the bootstrap push had failed CI: two sandbox tests hit the 2 s wall clock on `ubuntu-latest`
+- PR #2 (merged 2026-09-30T23:34Z) `docs: record PoC 4 (Kotlin LSP) as passing`
+- PR #3 (merged 2026-10-01T01:37Z) `build: migrate to detekt 2.0.0-alpha.6 and run the Gradle daemon on JDK 25`
 
-## [2026-09-30] Phase 0-B — harness, gates, wiki, self-improvement loop ✅
+## [2026-10-02] Phase 0-B — harness, gates, wiki, self-improvement loop 🚧
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-b-harness.md`
-- CLAUDE.md (N lines) · 5 rules · 8 skills · 4 hooks · pre-push guards (first firings logged) · 4 workflows in CI · 3 saved fan-out workflows
-- ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
-- Next: Phase 1 ticket 1 via /brainstorming → /issue (see goal.md)
+- Status: harness on PR #4 (this branch); the owner's GitHub App and secret, the merge, Task 13 protection and the acceptance run are pending
+- Exists: CLAUDE.md (102 lines) · 5 rules · 8 skills · 4 hooks + the `log-gate-event.sh` writer and `scripts/publish-events.sh` · pre-push guards (9 checks + wiki gate), hardened after the critic and final reviews · CI workflows: `ci.yml`, `test-guard.yml` (the `test-change` label job and the `guards` job, which runs the base commit's `guards.sh`), `claude-review.yml`, `harness-improve.yml` · 3 saved fan-out workflows · ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
+- Events: gate firings go to the shared untracked log in the git common dir and are published to `.harness/events.jsonl`; 4 probe lines (`"probe":true`: stop-gate 1, block-danger 1, pre-push-guard 2 from the negative probe) are published so far
+- Pending: the owner installs the Claude GitHub App and sets `CLAUDE_CODE_OAUTH_TOKEN` (before the acceptance run and before the first scheduled `harness-improve` run, Mon 2026-10-05 06:00 KST) · squash-merge PR #4 · Task 13 branch protection · the acceptance run, which is the first deferred harness-hardening ticket through the whole loop (owned area `harness`)
+- Deferred hardening tickets: test-weakening detection · harness-owned paths · migration rename/delete · danger-hook false negatives and positives · guard fixtures and `test-hooks.sh` in CI
+- Next: Phase 0 ends when that first harness ticket completes the loop and stop-gate, pre-push-guard, wiki-gate and ci events have each been published; Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md) follows
 
 <!-- ARCHIVE -->
 ```
+
+Evidence sources (2026-10-02): `RESULT` lines and test counts from `gh run view 36801975950 --repo BrokenFinger98/vera --log` (jobs `check` and `itest`); PR titles and merge times from `gh pr view <n> --repo BrokenFinger98/vera --json title,mergedAt,url`; the PoC 2 status from `curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/org/graalvm/polyglot/js-isolate-community/25.4.4.1.1/`; PoC 1 from the two `TransactionalDdlPocTest` cases in the `:bootstrap:itest` XML report after a forced re-run (`4 tests, 0 failed, 0 skipped`); PoC 3 and 4 from Plan 0-A Tasks 3 and 11. The 0-B counts come from `wc -l CLAUDE.md`, `ls .claude/rules .claude/skills .claude/hooks`, `jq '[.hooks[][] | .hooks[]] | length' .claude/settings.json`, the numbered checks in `scripts/guards.sh`, `ls .github/workflows .claude/workflows` and `jq -r .gate .harness/events.jsonl | sort | uniq -c`. `#4` is the next free number (`gh pr list --state all` ends at `#3` and `gh issue list --state all` is empty); confirm it when the PR is opened.
+
+The intro line does not spell the marker out: `inject-state.sh` stops only at a line that IS the marker (the comment on a line of its own, trailing blanks allowed), so prose that quotes it cannot cut the injection short (an earlier version stopped at any line that contained the string and injected only the `# Progress` title). The marker stays the last line.
 
 - [ ] **Step 3: Write `.harness/metrics.md`**
 
@@ -1761,8 +2223,15 @@ Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected int
 
 | week | merged PRs | avg changed lines/PR | gate firings (rule:count) | critic blocking/PR | CI failure rate | regressions | time-to-green (median) |
 |---|---|---|---|---|---|---|---|
-| 2026-W40 | 0 | – | pre-push-guard:2 (negative probe) | – | – | 0 | – |
+| 2026-W40 (to 2026-10-02) | 3 | 558 | none counted (4 probe events, `"probe":true`, are skipped: stop-gate/check.sh-failed, block-danger/git-discard-all, pre-push-guard/deleted-test-file and assertion-decrease) | – | 11% (1 of 9 completed runs; 1 cancelled run not counted) | 0 | – |
 ```
+
+Computed 2026-10-02 for ISO week 2026-W40 (Mon 2026-09-28 to Sun 2026-10-04), so far:
+- Merged PRs and changed lines: `gh pr list --repo BrokenFinger98/vera --state merged --search "merged:>=2026-09-28" --json number,additions,deletions` gives #1 (54 changed lines), #2 (3) and #3 (1618); 3 PRs, (54 + 3 + 1618) / 3 = 558.
+- Gate firings: `jq -r 'select(.probe != true) | "\(.gate)/\(.rule)"' .harness/events.jsonl | sort | uniq -c` lists nothing: all four events fall in the week, but they carry `"probe":true` (deliberate gate tests; the two `pre-push-guard` ones come from the Task 7 negative probe on branch `tmp/guard-negative`), which the routine skips, so none counts as a firing.
+- CI failure rate: `gh run list --repo BrokenFinger98/vera --created ">=2026-09-28" --limit 200 --json conclusion,event,headBranch` gives 10 runs: 8 success, 1 failure (the bootstrap push, fixed by PR #1), 1 cancelled. The rate is failures over completed runs, 1 / (8 + 1).
+- Regressions: `gh issue list --repo BrokenFinger98/vera --state all` is empty, so no bug is filed against a merged ticket.
+- Critic blocking and time-to-green stay `–`: no critic event exists yet, and neither the spec nor the harness-improve prompt defines a time-to-green formula.
 
 - [ ] **Step 4: Commit**
 
@@ -1770,6 +2239,8 @@ Entries start with the date. Everything above `<!-- ARCHIVE -->` is injected int
 git add .harness/state/goal.md.example .harness/state/progress.md .harness/metrics.md
 git commit -m "docs: add session state files, progress record and harness metrics table"
 ```
+
+`git status --porcelain` is empty afterwards: `goal.md` is ignored and was never staged.
 
 ---
 
@@ -1780,7 +2251,7 @@ git commit -m "docs: add session state files, progress record and harness metric
 
 - [ ] **Step 1: Write the ADRs (same frontmatter pattern; bodies below)**
 
-Frontmatter for every file (adjust `tags`):
+Frontmatter for every file (adjust `tags`; D3, rewritten on 2026-10-01, sets `updated: 2026-10-01`; D9, revised on 2026-10-02, sets `updated: 2026-10-02`):
 
 ```yaml
 ---
@@ -1810,7 +2281,7 @@ Same rule as the owner's programmers-tracker repo; consistent with the "docs are
 ## Accepted costs
 Reading friction for the owner; Korean research notes live in the owner's central wiki instead of this repo. Guard: `scripts/guards.sh` check 6.
 ## Outcome
-`.gitignore` excludes `docs/research/`; pre-push guard rejects Hangul outside `README.ko.md`.
+`.gitignore` excludes `docs/research/`; the pre-push guard rejects newly added Hangul (added lines and commit messages) outside `README.ko.md`; the CI `guards` job runs the same script.
 ```
 
 `2026-09-30-stack-baseline-sept-2026.md`:
@@ -1823,9 +2294,9 @@ The origin design chat proposed Java 21, Spring Boot 3.x, PostgreSQL 16, Redis. 
 ## Options considered
 Keep the chat's plan · raise to current LTS/GA line.
 ## Decision
-Java 25 LTS, Spring Boot 4.1.1 (Framework 7.0.9), Spring Modulith 2.1.1, Gradle 9.7.1, PostgreSQL 18, jOOQ 3.21.7 (BOM), Flyway 12.4 (BOM) + `flyway-database-postgresql`, Valkey 9, Kafka 4.3 (Phase 3.5), Testcontainers 2.0.5, Keycloak 26.7 (Phase 3), springdoc 3.1 (Phase 1).
+Java 25 LTS, Spring Boot 4.1.1 (Framework 7.0.9), Spring Modulith 2.1.1, Gradle 9.7.1, PostgreSQL 18, jOOQ 3.21.7 (BOM), Flyway 12.4 (BOM) + `flyway-database-postgresql`, Valkey 9, Kafka 4.2.1 (BOM, matching the compose image; Phase 3.5), Testcontainers 2.0.5, Keycloak 26.7 (Phase 3), springdoc 3.1 (Phase 1).
 ## Rationale
-Maven Central metadata checked for every pinned artifact; a previous work project of the owner completed the same Boot 4/JDK 25 upgrade on 2026-09-28, so the traps are documented.
+Maven Central metadata checked for every pinned artifact; the owner's own upgrade notes from 2026-09-28 cover the same Boot 4/JDK 25 upgrade, so the traps are documented.
 ## Accepted costs
 Boot 4 starter modularisation fails silently when a starter is missing; Testcontainers 2 renamed artifacts and packages; Valkey needs a service-connection label in compose.
 ## Outcome
@@ -1861,7 +2332,7 @@ Böckeler (martinfowler.com, 2026-08-10) found no quality difference between age
 ## Options considered
 Enforce TDD via skills/hooks · scenarios + gates · scenarios only.
 ## Decision
-The owner writes EARS acceptance criteria in the ticket; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` (`test`) + ArchUnit (`archTest`), Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
+EARS acceptance criteria are drafted by the agent in /ticket and approved by the owner; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` (`test`) + ArchUnit (`archTest`), Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
 ## Rationale
 What the machine can enforce is "tests come with the code" and "tests are not weakened"; the order of writing is unprovable and, per the evidence, not valuable.
 ## Accepted costs
@@ -1876,7 +2347,7 @@ The superpowers TDD skill is used only to choose verification scenarios.
 # D5 — Orca worktrees, two to three in parallel, one owned module per ticket
 
 ## Context
-Parallel agents collide on shared files; 2026 practice caps at 2–4 worktrees per developer before review becomes the bottleneck. The owner already uses Orca (used on two earlier projects).
+Parallel agents collide on shared files; 2026 practice caps at 4–8 worktrees per developer before review becomes the bottleneck. The owner already uses Orca (used on two earlier projects).
 ## Options considered
 Orca · Claude Code `--worktree`/`/batch` only · sequential only.
 ## Decision
@@ -1884,7 +2355,7 @@ Orca: one ticket = one worktree = one terminal, at most three concurrent. Ticket
 ## Rationale
 Reuses installed tooling and experience; module ownership is the single-writer principle that prevents merge hell.
 ## Accepted costs
-Orca is UI-configured only; worktrees share the Gradle daemon and can produce false Stop-gate failures (hook skips when another build runs).
+Orca is a third-party app that the skills drive through its CLI (`orca worktree create/rm`); worktrees share the Gradle daemon but each builds into its own `build/`, and the Stop gate skips only while a Gradle build of the same checkout runs.
 ## Outcome
 `.worktreeinclude`; `start-task` checks for blockers before work begins.
 ```
@@ -1903,9 +2374,9 @@ GraalVM CE 25 as runtime from day one · stock Temurin 25 with interpreter · an
 ## Rationale
 One JDK for build, test and run keeps the toolchain simple; the sandbox contract (JSON in, JSON out) is independent of the runtime.
 ## Accepted costs
-Interpreter-only execution; `js-isolate-community` availability recorded by PoC 2.
+Interpreter-only execution; `js-isolate-community` availability recorded by PoC 2. No per-script heap cap on the stock JDK (PoC 2 measured `sandbox.MaxHeapMemory` as unsupported); Phase 3 decides between process isolation and the isolate build.
 ## Outcome
-`platform/rule` `ScriptSandbox` with four passing tests.
+`platform/rule` `ScriptSandbox` with 17 passing tests (14 methods, the contract test parameterised four times).
 ```
 
 `2026-09-30-stop-hook-gate-trial.md`:
@@ -1914,11 +2385,11 @@ Interpreter-only execution; `js-isolate-community` availability recorded by PoC 
 # D7 — Stop-hook quality gate as a one-month trial
 
 ## Context
-The owner deleted a global stop-verify hook in 2026-07 after it never fired; a previous team project's stop gate produced false failures during concurrent Gradle runs. Anthropic's best practices name the Stop hook as the deterministic completion gate.
+The owner deleted a global stop-verify hook in 2026-07 after it never fired; an earlier project's stop gate produced false failures during concurrent Gradle runs. Anthropic's best practices name the Stop hook as the deterministic completion gate.
 ## Options considered
 No Stop gate · Stop gate always · trial with audit.
 ## Decision
-`stop-gate.sh` runs `scripts/check.sh` when source files changed, skips when another Gradle client is running, and logs every block. After 30 days: keep if it blocked a real mistake at least once, otherwise delete.
+`stop-gate.sh` runs `scripts/check.sh` when source or build files changed, skips only while a Gradle build of the same checkout runs (other worktrees build into their own `build/`), and logs every block and skip. After 30 days: keep if it blocked a real mistake at least once, otherwise delete.
 ## Rationale
 Harness-debt-audit principle: a mechanism earns its place with evidence of firing.
 ## Accepted costs
@@ -1956,13 +2427,13 @@ The cycle every 2026 source ends with — remember/compound/improve — was miss
 ## Options considered
 Manual only · fully autonomous rule edits · machine-proposed, human-merged.
 ## Decision
-Capture: `log-gate-event.sh` appends every gate firing to `.harness/events.jsonl`. Distill: `/finish-task` writes a counted retro to `lessons.md`. Promote: weekly `harness-improve` opens one PR per lesson with count ≥ 3 or rule fired ≥ 3 times, proposing exactly one rule/hook/lint/test change. Prune: monthly PR deleting rules with zero firings in 30 days. Measure: weekly metrics line. Only the owner merges.
+Capture: hooks and guards append every gate firing, through `log-gate-event.sh`, to an untracked log shared by all worktrees (`<git common dir>/vera-events.jsonl`); `/finish-task` and `/pull-request` publish its new lines to `.harness/events.jsonl` with `scripts/publish-events.sh`, and the agent logs critic and ci events itself (CI does not parse its checks). Distill: `/finish-task` writes a counted retro to `lessons.md`. Promote: weekly `harness-improve` opens one proposal per lesson with count ≥ 3 or rule fired ≥ 3 times (unique events, probes excluded), proposing exactly one rule/hook/lint/test change: a PR, or one issue carrying the patch when the change touches `.claude/rules` or `.claude/hooks` (protected paths that CI cannot write, with no bypass). Prune: a monthly pass proposes deleting rules with zero firings in 30 days. Measure: the weekly metrics line, appended in promote mode. Only the owner merges.
 ## Rationale
 Evidence-gated promotion mirrors Anthropic's "bugs → CLAUDE.md" loop and OpenAI's garbage-collection agents while keeping the owner as the judge of every rule change.
 ## Accepted costs
-One weekly review of proposal PRs; events log grows (pruned monthly).
+One weekly review of proposals; the committed events log only grows (nothing prunes it); events from a ticket's last push reach it with the next ticket, because they are published before the merge approval.
 ## Outcome
-`.harness/events.jsonl`, `lessons.md`, `.github/workflows/harness-improve.yml`, `.harness/metrics.md`.
+`.harness/events.jsonl`, `scripts/publish-events.sh`, `lessons.md`, `.github/workflows/harness-improve.yml`, `.harness/metrics.md`.
 ```
 
 - [ ] **Step 2: Write the source stub**
@@ -1985,7 +2456,7 @@ Raw: the origin design chat (ServiceNow-style platform, four engines, ITAM first
 
 ## Claims
 1. All primary sources agree on one cycle: spec/plan separated from coding, small units, machine-verified completion, writer/reviewer separation, short instructions + skills + hooks.
-2. Enforced TDD shows no quality gain for agents (Böckeler 2026-08); scenarios + gates + mutation testing do.
+2. Enforced TDD showed no quality gain for agents (Böckeler 2026-08); the research recommends scenarios + gates + mutation testing instead (a recommendation, not a measured effect).
 3. "Graph engineering" is renamed workflow orchestration; explicit graph runtimes cost tokens without measured benefit for coding pipelines.
 4. Stack baseline moved: Boot 4.1 / Java 25 / PG 18 / jOOQ 3.21 / Testcontainers 2 verified on Maven Central.
 5. Self-improvement must be evidence-gated and human-merged (self-evaluation bias).
@@ -2007,12 +2478,14 @@ git commit -m "docs: add ADRs D1-D9 and the Phase 0 source stub to the repo wiki
 
 ### Task 12: Global fixes and research hand-over (outside the repo)
 
-- [ ] **Step 1: Fix the global `harness-dev` skill state path**
+- [ ] **Step 1: Fix the global `harness-dev` skill state path** (done 2026-10-02)
 
-Run: `grep -n '\.claude/state' /Users/yu-sun00/.claude/skills/harness-dev/SKILL.md`
-Expected: two lines (`goal.md`, `progress.md`). Replace `.claude/state/` with `.harness/state/` in both (use `sed -i '' 's#\.claude/state/#.harness/state/#g' /Users/yu-sun00/.claude/skills/harness-dev/SKILL.md`), then re-run the grep and expect no output.
+The fix is backward compatible: older projects outside this repo still use `.claude/state/`, so the skill names `.harness/state/` first and keeps `.claude/state/` as the fallback.
 
-- [ ] **Step 2: Move the Korean research document to the owner's central wiki raw layer**
+Run: `grep -n 'state/' /Users/yu-sun00/.claude/skills/harness-dev/SKILL.md`
+Expected: two lines (`goal.md`, `progress.md`), each naming `.harness/state/` first and the older `.claude/state/` path in parentheses.
+
+- [ ] **Step 2: Move the Korean research document to the owner's central wiki raw layer** (done 2026-10-02)
 
 ```bash
 mv /Users/yu-sun00/Desktop/vera/docs/research/2026-09-30-ai-driven-development-methodology.md /Users/yu-sun00/Desktop/llm-wiki/raw/sessions/2026-09-30-vera-ai-driven-development-methodology-research.md
@@ -2021,23 +2494,27 @@ rmdir /Users/yu-sun00/Desktop/vera/docs/research
 
 Then, in a session opened in `/Users/yu-sun00/Desktop/llm-wiki`, run `/wiki-ingest` so the central wiki gets the decisions and the methodology findings (that wiki's skills, not this repo's).
 
-- [ ] **Step 3: Update Claude Code and audit the constitution**
+- [ ] **Step 3: Update Claude Code and audit the constitution** (owner step)
 
 Run: `claude update` then, in a new session in the repo, `/doctor`.
-Expected: version ≥ 2.1.277 (rules directory and AGENTS.md support per docs); `/doctor` proposes no cuts to `CLAUDE.md` that remove a rule backed by a gate — accept cuts only for content derivable from code.
+Expected: version ≥ 2.1.277 (rules directory and AGENTS.md support per docs; the installed 2.1.285 already meets it); `/doctor` proposes no cuts to `CLAUDE.md` that remove a rule backed by a gate — accept cuts only for content derivable from code.
 
 ---
 
 ### Task 13: Branch protection and Phase 0 acceptance run
 
-- [ ] **Step 1: Push and let CI register all checks**
+Order: Task 8 Step 5 (the owner installs the Claude GitHub App and sets the secret) → PR #4 → merge → Step 2 → Step 3. PR #4 opens before that setup; the setup must be done before the Step 3 acceptance run and before the first scheduled `harness-improve` run (Mon 2026-10-05 06:00 KST).
+
+- [ ] **Step 1: The owner approves; squash-merge PR #4**
+
+There is no direct push: the pre-push gate refuses `main`. Follow `/pull-request` from its checks step (checks green, events published, the owner's design review and explicit merge approval), then merge and look at `main`:
 
 ```bash
-git -C /Users/yu-sun00/Desktop/vera push origin main
-gh run list --repo BrokenFinger98/vera --limit 3
+gh pr merge 4 --repo BrokenFinger98/vera --squash
+gh run list --repo BrokenFinger98/vera --branch main --limit 3
 ```
 
-Expected: the `CI` run is green; `test-guard` and `claude-review` appear only on PRs (they are registered as checks after the first PR — see Step 3).
+Add `--delete-branch` to the merge when the branch is not checked out in a worktree. Expected: the `CI` run on `main` is green; `test-guard` and `claude-review` run only on PRs (they register as checks with the first PR run).
 
 - [ ] **Step 2: Branch protection on `main`**
 
@@ -2046,9 +2523,9 @@ gh api -X PUT repos/BrokenFinger98/vera/branches/main/protection \
   -H "Accept: application/vnd.github+json" \
   --input - <<'JSON'
 {
-  "required_status_checks": { "strict": true, "contexts": ["check (format, detekt, unit, arch)", "itest (Testcontainers PostgreSQL 18)", "coverage (Kover ≥ 80% lines)", "build (bootJar)", "label-required-when-tests-change"] },
+  "required_status_checks": { "strict": true, "contexts": ["check (format, detekt, unit, arch)", "itest (Testcontainers PostgreSQL 18)", "coverage (Kover ≥ 80% lines)", "build (bootJar)", "label-required-when-tests-change", "guards (constitution, fail-closed)"] },
   "enforce_admins": true,
-  "required_pull_request_reviews": { "required_approving_review_count": 1, "require_code_owner_reviews": true },
+  "required_pull_request_reviews": { "required_approving_review_count": 0, "require_code_owner_reviews": false },
   "restrictions": null,
   "required_linear_history": true,
   "allow_force_pushes": false,
@@ -2059,34 +2536,34 @@ JSON
 gh api -X PATCH repos/BrokenFinger98/vera -f allow_squash_merge=true -f allow_merge_commit=false -f allow_rebase_merge=false -f delete_branch_on_merge=true >/dev/null && echo "merge settings ok"
 ```
 
-Expected: JSON response with `required_status_checks` echoing the five contexts; `merge settings ok`. A solo owner approving their own PR: GitHub does not count self-approval, so set `required_approving_review_count` to `0` if merges block — record that in progress.md (the design review still happens; it is documented in the PR checklist).
+Expected: JSON response with `required_status_checks` echoing the six contexts (the four `ci.yml` jobs, the label job and the `guards` job of `test-guard.yml`; `claude-review` stays advisory); `merge settings ok`. A pull request is required, but no GitHub approval: agents open PRs from the owner's account, and GitHub never counts an author's approval, so a required approval could never be met. The owner's approval happens in the flow instead (the design review and the merge approval in `/pull-request`). Record this in progress.md. The other rules stay: `enforce_admins`, linear history, no force push, conversation resolution; the repository merges squash-only and deletes merged branches.
 
-- [ ] **Step 3: Acceptance run (spec §13) — a harness ticket through the whole loop**
+- [ ] **Step 3: Acceptance run (spec §13) — the first harness ticket through the whole loop**
 
-Use the flow itself to prove itself: `/issue` → "harness: verify Phase 0 gates fire" (owned module `:bootstrap`, EARS = the §13 lines) → in the worktree make a trivial test-covered change (add `TableName.equals` behaviour test or similar) → let the Stop hook run → `/commit` → push (guards + wiki gate) → `/finish-task` (retro → first `lessons.md` entry) → `/pull-request` → CI + claude-review → owner approves → squash merge.
+Use the flow itself to prove itself, on the first deferred harness-hardening ticket (owned area `harness`, not a metadata test): pick one item from the deferred list in `progress.md` (test-weakening detection, harness-owned paths, migration rename/delete, danger-hook false negatives and positives, guard fixtures and `test-hooks.sh` in CI). `/ticket` → implement it with its tests in the worktree → let the Stop hook run → `/gated-commit` → push (guards + wiki gate) → `/finish-task` (retro → first `lessons.md` entry) → `/pull-request` → CI + claude-review → owner approves → squash merge.
 
 Expected evidence, pasted into `progress.md`:
-- `.harness/events.jsonl` contains at least one `stop-gate` or `pre-push-guard` or `wiki-gate` event from this ticket (force one: push once without wiki changes and without the trailer, observe the block, then add the trailer).
+- `.harness/events.jsonl` holds a published `stop-gate`, `pre-push-guard`, `wiki-gate` and `ci` event from this ticket (force each once, observe the block, then fix it: a failing `check.sh` at Stop, a push the guards refuse, a push without wiki changes and without the trailer, a failing required check).
 - `lessons.md` has its first entry with `count: 1`.
 - PR shows `claude-review` verdict and all required checks green; merged with squash; branch deleted.
-- `gh workflow run harness-improve.yml -f mode=promote` completes with "promote: nothing due" in the log.
+- `gh workflow run harness-improve.yml -f mode=promote` completes, prints "promote: nothing due" and opens one `harness/promote-metrics-<yyyymmdd>` pull request with the week's metrics line (the owner merges or closes it).
 
 - [ ] **Step 4: Close Phase 0**
 
-Update `.harness/state/progress.md` Phase 0-B entry with the evidence, rewrite `goal.md` "Where we are" to "Phase 1 — metadata engine", commit via `/commit` on a `docs/` branch, PR, merge.
+Phase 0 ends here: the first harness ticket has completed the loop and stop-gate, pre-push-guard, wiki-gate and ci events have each been published. Update `.harness/state/progress.md` Phase 0-B entry with the evidence and flip it to ✅, rewrite `goal.md` "Where we are" to "Phase 1 — metadata engine", commit via `/gated-commit` on a `docs/` branch, PR, merge. Phase 1 ticket 1 follows.
 
 ---
 
 ## Self-review against the spec
 
-- §3 operating model → CLAUDE.md flow + skills (`issue`, `start-task`, `finish-task`, `pull-request`) ✓
+- §3 operating model → CLAUDE.md flow + skills (`ticket`, `start-task`, `finish-task`, `pull-request`) ✓
 - §4 layout → every harness path created (Tasks 1–11) ✓; `docs/specs/<module>.md` template only (modules get specs with their first ticket) ✓
-- §5 harness placement → global reused, project overrides by name, rules path-scoped, settings without `defaultMode`, `cd` rule ✓; global `harness-dev` path fix (Task 12) ✓
-- §6 gate stack → 0a format.sh + global secrets ✓ · 0b deny list + global block-danger ✓ · 1 stop-gate.sh ✓ · 2 guards.sh + wiki gate ✓ · 3 ci.yml (Plan A) + test-guard + claude-review ✓ · 4 branch protection ✓ · 5 PR checklist ✓; every failure message says what to change ✓
+- §5 harness placement → global reused, GitHub-flow skills under distinct names (a personal skill outranks a same-name project skill), rules path-scoped, settings without `defaultMode`, `cd` rule ✓; global `harness-dev` path fix (Task 12) ✓
+- §6 gate stack → 0a format.sh + global secrets ✓ · 0b deny list + global block-danger ✓ · 1 stop-gate.sh ✓ · 2 guards.sh + wiki gate (hook, and the CI guards job) ✓ · 3 ci.yml (Plan A) + test-guard (label job, guards job) + claude-review (advisory) ✓ · 4 branch protection (PRs, six required checks, no GitHub approvals) ✓ · 5 PR checklist ✓; every failure message says what to change ✓
 - §7 tickets/DoD → issue template, PR template, size guard, ADR rule ✓
 - §9 D5/D8 → worktree include, blocked-by in template and `start-task`, three workflows ✓
 - §10 knowledge + §10.1 loop → wiki schema/skills, lessons.md format, events log, weekly/monthly routine, metrics ✓
 - §12 steps 1, 4, 5, 7 ✓ (step 7 is the acceptance run, Task 13)
-- §13 acceptance criteria → each mapped: inject-state (Task 3), format (Task 3), deny/block (Task 3 settings + global hook), stop-gate (Task 3), guards on push (Task 7), CI + protection (Plan A Task 12 + Task 13), events log (Task 3), retro (Task 5), routine PR (Task 8, dry run in Task 13), ready queue (Task 5 `start-task` blocker check) ✓
-- Placeholder scan: the only `<...>` tokens are inside templates meant to be filled per ticket, and `<200|404>`-style evidence slots filled by the run itself. No TODO/TBD.
-- Consistency: script names (`log-gate-event.sh`, `guards.sh`, `check.sh`), trailers (`Test-Change:`, `Wiki-Skip:`), labels (`test-change`, `task`, `harness`), event gate names (`stop-gate`, `pre-push-guard`, `wiki-gate`, `critic`, `ci`) match across hooks, skills, workflows and ADRs.
+- §13 acceptance criteria → each mapped: inject-state (Task 3), format (Task 3), deny/block (Task 3 settings + global hook), stop-gate (Task 3), guards on push (Task 7), CI + protection (Plan A Task 12 + Task 13), events log (Task 3: shared log and `publish-events.sh`), retro (Task 5), routine PR (Task 8, dry run in Task 13), ready queue (Task 5 `start-task` blocker check) ✓
+- Placeholder scan: the only `<...>` tokens are inside templates, skills and rules meant to be filled per ticket (`<n>`, `<type>`, `<slug>`, `<root>`, `<module>`). No TODO/TBD.
+- Consistency: script names (`log-gate-event.sh`, `publish-events.sh`, `guards.sh`, `check.sh`), trailers (`Test-Change:`, `Wiki-Skip:`), labels (`test-change`, `task`, `harness`), event gate names (`stop-gate`, `pre-push-guard`, `wiki-gate`, `critic`, `ci`) and the events location (the shared untracked log in the git common dir, published to `.harness/events.jsonl` by `/finish-task` and `/pull-request`) match across hooks, scripts, skills, workflows, the spec and ADR D9.

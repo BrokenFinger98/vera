@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# pre-push — constitution guards (fail-closed) then the wiki gate (fail-open with 'Wiki-Skip: <reason>' trailer).
+# Installed by .claude/hooks/inject-state.sh via core.hooksPath. Both halves log through .claude/hooks/log-gate-event.sh.
+set -u
+ROOT="$(git rev-parse --show-toplevel)"
+LOG="$ROOT/.claude/hooks/log-gate-event.sh"
+Z40="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "${local_ref:-}" ] && continue
+  case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac          # tags/notes pass
+  if [ "$remote_ref" = refs/heads/main ]; then                          # main changes only through a reviewed PR
+    "$LOG" pre-push-guard push-to-main "$local_ref -> $remote_ref"
+    echo "✖ pushes to main are refused — push your branch and open a PR (/pull-request)." >&2
+    exit 1
+  fi
+  [ "$local_sha" = "$Z40" ] && continue                                 # deletions pass
+  # Base = where the branch leaves main, on every push (never $remote_sha): after 'git merge origin/main'
+  # the old remote tip would pull other PRs' commits, trailers and deletions into the range. guards.sh reduces any
+  # base to that merge-base itself, so a direct run agrees with this hook. No merge-base → empty base → guards.sh
+  # falls back to origin/main and, if that does not resolve either, asks for a fetch.
+  base="$(git merge-base refs/remotes/origin/main "$local_sha" 2>/dev/null)"
+
+  # --- guards: fail-closed ---
+  if [ -x "$ROOT/scripts/guards.sh" ]; then
+    if ! "$ROOT/scripts/guards.sh" "$base" "$local_sha" >&2; then
+      echo "" >&2; echo "✖ constitution guards failed — nothing was pushed." >&2
+      exit 1
+    fi
+  else
+    echo "pre-push: scripts/guards.sh missing or not executable — refusing to push without guards" >&2
+    exit 1
+  fi
+
+  # --- wiki gate: fail-open ---
+  # concepts/lessons.md does not count: /finish-task edits it on every branch, so it would pass every range.
+  if ! git diff --quiet "$base" "$local_sha" -- docs/llm-wiki/wiki/ ':(exclude)docs/llm-wiki/wiki/concepts/lessons.md' 2>/dev/null; then
+    continue                                                            # wiki page or ADR changed → fine
+  fi
+  if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:[[:space:]]*[^[:space:]]'; then   # needs a reason
+    "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:[[:space:]]*[^[:space:]]')"
+    continue
+  fi
+  # code-only ranges without decisions are common; block only when the range touched source, harness, CI, the review
+  # contract, detekt config or the root build (root *.gradle.kts, gradle/)
+  if git diff --name-only "$base" "$local_sha" | grep -qE '^(platform|apps|ingestion|bootstrap|\.claude|\.githooks|\.github|scripts|config/detekt|gradle/|CLAUDE\.md|REVIEW\.md|[^/]+\.gradle\.kts$)'; then
+    "$LOG" wiki-gate blocked-no-wiki-change "$remote_ref"
+    echo "🛑 wiki gate: this range changes code, harness, CI or build files but no file under docs/llm-wiki/wiki/ (concepts/lessons.md alone does not count)." >&2
+    echo "   Run /wiki-ingest (each decision → an ADR in docs/llm-wiki/wiki/decisions/), or add a commit trailer 'Wiki-Skip: <reason>' if truly nothing was decided." >&2
+    exit 1
+  fi
+done
+exit 0

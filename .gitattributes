@@ -3,3 +3,5 @@
 *.png binary
 gradlew text eol=lf
 *.bat text eol=crlf
+.harness/events.jsonl merge=union
+.harness/state/progress.md merge=union
