@@ -118,4 +118,44 @@ jq -cn --arg c "$long" '{tool_input:{command:$c}}' | "$H/block-project-danger.sh
 # guards: current HEAD against itself must pass
 "$ROOT/scripts/guards.sh" HEAD HEAD >/dev/null 2>&1 && ok "guards no-op range" || bad "guards no-op range"
 
+# guards and pre-push in a fixture, offline: origin/main is a local ref and the remote a bare repository under $T.
+# Secrets and Korean text are built from escapes at run time, so this file holds neither.
+P="$T/guards"; fixture "$P"; git init -q --bare "$T/remote.git"; git -C "$P" config core.hooksPath .githooks
+commit_in() { git -C "$1" add -A && git -C "$1" commit -qm "$2"; }
+guards_last() { "$P/scripts/guards.sh" HEAD~1 HEAD 2>&1 || true; }   # output only: under pipefail a violation's exit 1 would fail the grep
+out="$("$P/scripts/guards.sh" no-such-ref HEAD 2>&1)"
+[ $? -eq 2 ] && printf '%s' "$out" | grep 'git fetch origin main' >/dev/null && ok "guards: a ref that does not resolve is exit 2" || bad "guards: a ref that does not resolve is exit 2"
+mkdir -p "$T/nogit" && cp "$P/scripts/guards.sh" "$T/nogit/" && out="$(cd "$T/nogit" && ./guards.sh 2>&1)"
+[ $? -eq 2 ] && printf '%s' "$out" | grep 'not inside a git checkout' >/dev/null && ok "guards: outside a checkout is exit 2" || bad "guards: outside a checkout is exit 2"
+mkdir -p "$P/m/src/main/kotlin" && printf '*.kt -diff\n' > "$P/.gitattributes" && printf '@Suppress("X")\nclass A\n' > "$P/m/src/main/kotlin/A.kt"
+commit_in "$P" "feat: a suppression behind -diff"
+guards_last | grep 'new suppression' >/dev/null && ok "guards: '*.kt -diff' hides no added line" || bad "guards: '*.kt -diff' hides no added line"
+mkdir -p "$P/m/src/test/kotlin" && printf 'class T { fun t() = assertThat(1) }\n' > "$P/m/src/test/kotlin/T.kt" && commit_in "$P" "test: add T"
+git -C "$P" rm -q m/src/test/kotlin/T.kt && commit_in "$P" $'test: drop T\n\nTest-Change:'
+guards_last | grep 'test files deleted' >/dev/null && ok "guards: 'Test-Change:' without a reason excuses nothing" || bad "guards: 'Test-Change:' without a reason excuses nothing"
+git -C "$P" commit -q --amend -m $'test: drop T\n\nTest-Change: obsolete probe'
+"$P/scripts/guards.sh" HEAD~1 HEAD >/dev/null 2>&1 && ok "guards: 'Test-Change: <reason>' accepts the deletion" || bad "guards: 'Test-Change: <reason>' accepts the deletion"
+printf 'k = "%s"\n' "sk-ant-$(printf 'x%.0s' $(seq 24))" > "$P/k1.txt" && commit_in "$P" "chore: k1"
+guards_last | grep 'secret-like literal' >/dev/null && ok "guards: an sk-ant- key is a secret" || bad "guards: an sk-ant- key is a secret"
+printf 'k = "%s"\n' "github_pat_$(printf 'y%.0s' $(seq 24))" > "$P/k2.txt" && commit_in "$P" "chore: k2"
+guards_last | grep 'secret-like literal' >/dev/null && ok "guards: a github_pat_ token is a secret" || bad "guards: a github_pat_ token is a secret"
+printf 'jamo %s\n' "$(printf '\xe3\x84\xb1')" > "$P/j1.md" && commit_in "$P" "docs: j1"
+guards_last | grep 'Korean text added' >/dev/null && ok "guards: compatibility jamo are Korean" || bad "guards: compatibility jamo are Korean"
+printf 'jamo %s\n' "$(printf '\xe1\x84\x80')" > "$P/j2.md" && commit_in "$P" "docs: j2"
+guards_last | grep 'Korean text added' >/dev/null && ok "guards: Hangul Jamo are Korean" || bad "guards: Hangul Jamo are Korean"
+printf 'ok\n' > "$P/j3.md" && commit_in "$P" "docs: $(printf '\xed\x95\x9c')"
+guards_last | grep 'Korean text in a commit message' >/dev/null && ok "guards: Korean in a commit message" || bad "guards: Korean in a commit message"
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/main >/dev/null 2>&1
+[ $? -ne 0 ] && last | jq -e '.rule=="push-to-main"' >/dev/null && ok "pre-push refuses a push to main" || bad "pre-push refuses a push to main"
+git -C "$P" update-ref refs/remotes/origin/main HEAD
+printf 'x\n' > "$P/scripts/x.txt" && commit_in "$P" $'chore: touch scripts\n\nWiki-Skip:'
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1
+[ $? -ne 0 ] && last | jq -e '.rule=="blocked-no-wiki-change"' >/dev/null && ok "pre-push: 'Wiki-Skip:' without a reason does not pass" || bad "pre-push: 'Wiki-Skip:' without a reason does not pass"
+git -C "$P" commit -q --amend -m $'chore: touch scripts\n\nWiki-Skip: probe, nothing decided'
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1 && ok "pre-push: 'Wiki-Skip: <reason>' passes" || bad "pre-push: 'Wiki-Skip: <reason>' passes"
+git -C "$P" worktree add -q "$T/pwt" -b wt-guards && printf '@Suppress("Y")\nclass B\n' > "$T/pwt/m/src/main/kotlin/B.kt" && commit_in "$T/pwt" "feat: B"
+git -C "$T/pwt" push -q "$T/remote.git" HEAD:refs/heads/wt-guards >/dev/null 2>&1
+[ $? -ne 0 ] && jq -s -e 'map(select(.branch=="wt-guards" and .rule=="new-suppress")) | length == 1' "$VERA_EVENTS_FILE" >/dev/null \
+  && ok "guards log from a worktree (git exports GIT_DIR to hooks there)" || bad "guards log from a worktree (git exports GIT_DIR to hooks there)"
+
 exit $fail

@@ -774,6 +774,46 @@ jq -cn --arg c "$long" '{tool_input:{command:$c}}' | "$H/block-project-danger.sh
 # guards: current HEAD against itself must pass
 "$ROOT/scripts/guards.sh" HEAD HEAD >/dev/null 2>&1 && ok "guards no-op range" || bad "guards no-op range"
 
+# guards and pre-push in a fixture, offline: origin/main is a local ref and the remote a bare repository under $T.
+# Secrets and Korean text are built from escapes at run time, so this file holds neither.
+P="$T/guards"; fixture "$P"; git init -q --bare "$T/remote.git"; git -C "$P" config core.hooksPath .githooks
+commit_in() { git -C "$1" add -A && git -C "$1" commit -qm "$2"; }
+guards_last() { "$P/scripts/guards.sh" HEAD~1 HEAD 2>&1 || true; }   # output only: under pipefail a violation's exit 1 would fail the grep
+out="$("$P/scripts/guards.sh" no-such-ref HEAD 2>&1)"
+[ $? -eq 2 ] && printf '%s' "$out" | grep 'git fetch origin main' >/dev/null && ok "guards: a ref that does not resolve is exit 2" || bad "guards: a ref that does not resolve is exit 2"
+mkdir -p "$T/nogit" && cp "$P/scripts/guards.sh" "$T/nogit/" && out="$(cd "$T/nogit" && ./guards.sh 2>&1)"
+[ $? -eq 2 ] && printf '%s' "$out" | grep 'not inside a git checkout' >/dev/null && ok "guards: outside a checkout is exit 2" || bad "guards: outside a checkout is exit 2"
+mkdir -p "$P/m/src/main/kotlin" && printf '*.kt -diff\n' > "$P/.gitattributes" && printf '@Suppress("X")\nclass A\n' > "$P/m/src/main/kotlin/A.kt"
+commit_in "$P" "feat: a suppression behind -diff"
+guards_last | grep 'new suppression' >/dev/null && ok "guards: '*.kt -diff' hides no added line" || bad "guards: '*.kt -diff' hides no added line"
+mkdir -p "$P/m/src/test/kotlin" && printf 'class T { fun t() = assertThat(1) }\n' > "$P/m/src/test/kotlin/T.kt" && commit_in "$P" "test: add T"
+git -C "$P" rm -q m/src/test/kotlin/T.kt && commit_in "$P" $'test: drop T\n\nTest-Change:'
+guards_last | grep 'test files deleted' >/dev/null && ok "guards: 'Test-Change:' without a reason excuses nothing" || bad "guards: 'Test-Change:' without a reason excuses nothing"
+git -C "$P" commit -q --amend -m $'test: drop T\n\nTest-Change: obsolete probe'
+"$P/scripts/guards.sh" HEAD~1 HEAD >/dev/null 2>&1 && ok "guards: 'Test-Change: <reason>' accepts the deletion" || bad "guards: 'Test-Change: <reason>' accepts the deletion"
+printf 'k = "%s"\n' "sk-ant-$(printf 'x%.0s' $(seq 24))" > "$P/k1.txt" && commit_in "$P" "chore: k1"
+guards_last | grep 'secret-like literal' >/dev/null && ok "guards: an sk-ant- key is a secret" || bad "guards: an sk-ant- key is a secret"
+printf 'k = "%s"\n' "github_pat_$(printf 'y%.0s' $(seq 24))" > "$P/k2.txt" && commit_in "$P" "chore: k2"
+guards_last | grep 'secret-like literal' >/dev/null && ok "guards: a github_pat_ token is a secret" || bad "guards: a github_pat_ token is a secret"
+printf 'jamo %s\n' "$(printf '\xe3\x84\xb1')" > "$P/j1.md" && commit_in "$P" "docs: j1"
+guards_last | grep 'Korean text added' >/dev/null && ok "guards: compatibility jamo are Korean" || bad "guards: compatibility jamo are Korean"
+printf 'jamo %s\n' "$(printf '\xe1\x84\x80')" > "$P/j2.md" && commit_in "$P" "docs: j2"
+guards_last | grep 'Korean text added' >/dev/null && ok "guards: Hangul Jamo are Korean" || bad "guards: Hangul Jamo are Korean"
+printf 'ok\n' > "$P/j3.md" && commit_in "$P" "docs: $(printf '\xed\x95\x9c')"
+guards_last | grep 'Korean text in a commit message' >/dev/null && ok "guards: Korean in a commit message" || bad "guards: Korean in a commit message"
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/main >/dev/null 2>&1
+[ $? -ne 0 ] && last | jq -e '.rule=="push-to-main"' >/dev/null && ok "pre-push refuses a push to main" || bad "pre-push refuses a push to main"
+git -C "$P" update-ref refs/remotes/origin/main HEAD
+printf 'x\n' > "$P/scripts/x.txt" && commit_in "$P" $'chore: touch scripts\n\nWiki-Skip:'
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1
+[ $? -ne 0 ] && last | jq -e '.rule=="blocked-no-wiki-change"' >/dev/null && ok "pre-push: 'Wiki-Skip:' without a reason does not pass" || bad "pre-push: 'Wiki-Skip:' without a reason does not pass"
+git -C "$P" commit -q --amend -m $'chore: touch scripts\n\nWiki-Skip: probe, nothing decided'
+git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1 && ok "pre-push: 'Wiki-Skip: <reason>' passes" || bad "pre-push: 'Wiki-Skip: <reason>' passes"
+git -C "$P" worktree add -q "$T/pwt" -b wt-guards && printf '@Suppress("Y")\nclass B\n' > "$T/pwt/m/src/main/kotlin/B.kt" && commit_in "$T/pwt" "feat: B"
+git -C "$T/pwt" push -q "$T/remote.git" HEAD:refs/heads/wt-guards >/dev/null 2>&1
+[ $? -ne 0 ] && jq -s -e 'map(select(.branch=="wt-guards" and .rule=="new-suppress")) | length == 1' "$VERA_EVENTS_FILE" >/dev/null \
+  && ok "guards log from a worktree (git exports GIT_DIR to hooks there)" || bad "guards log from a worktree (git exports GIT_DIR to hooks there)"
+
 exit $fail
 ```
 
@@ -1290,39 +1330,61 @@ git commit -m "docs: add repo-local LLM wiki schema, index, counted lessons and 
 ```bash
 #!/usr/bin/env bash
 # guards.sh [<base> <head>] — constitution guards over a commit range (default origin/main..HEAD). Fail-closed.
-# Exit 0 = pass. Each failure prints WHAT is wrong and HOW to fix it (the message is an instruction to the agent).
+# Exit 0 = pass, 1 = violation, 2 = cannot judge (not a checkout, a ref that does not resolve, a failing git command).
+# Each failure prints WHAT is wrong and HOW to fix it (the message is an instruction to the agent).
 set -uo pipefail
 # Check pipelines end in a reader that consumes all input (grep ... >/dev/null, never grep -q): under pipefail an early
 # exit kills the writer with SIGPIPE on a large diff or log, and a match would read as a miss.
-ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || git rev-parse --show-toplevel)"
+# ROOT: the script's own checkout, else the working directory (CI runs the base commit's copy from outside the
+# checkout). GIT_DIR is dropped for that lookup only: git exports it to hooks in a worktree, and with it set
+# 'git -C <dir> rev-parse --show-toplevel' answers <dir> itself, so the event log path would point nowhere.
+ROOT="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null)" \
+  || { echo "guards: not inside a git checkout" >&2; exit 2; }
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
-BASE="${1:-origin/main}"; HEAD_="${2:-HEAD}"
-git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null || BASE="$(git -C "$ROOT" rev-list --max-parents=0 "$HEAD_" | tail -1)"
+die() { echo "guards: $1" >&2; exit 2; }
+BASE="${1:-refs/remotes/origin/main}"; HEAD_="${2:-HEAD}"
+# No fallback base: the root commit made the range all of history and blamed files nobody touched.
+for ref in "$BASE" "$HEAD_"; do
+  git -C "$ROOT" rev-parse --verify -q "$ref^{commit}" >/dev/null || die "cannot resolve '$ref' — run: git fetch origin main"
+done
 RANGE="$BASE..$HEAD_"
 fail=0
 violation() { echo "✖ $1"; echo "  → $2"; "$LOG" pre-push-guard "$3" "$1"; fail=1; }
+# Content diffs are raw text whatever the repository says: a PR's '.gitattributes' with '*.kt -diff' (or a textconv,
+# an external diff or color.diff=always) would otherwise hide added lines from checks 3, 6, 7 and 9.
+DIFF=(--text --no-color --no-ext-diff --no-textconv)
+# A trailer counts only with a reason after the colon ('Test-Change:' alone excuses nothing).
+trailer() { printf '%s\n' "$messages" | grep -E "^$1:[[:space:]]*[^[:space:]]" >/dev/null; }
 
-changed="$(git -C "$ROOT" diff --name-only "$BASE" "$HEAD_")"
+changed="$(git -C "$ROOT" diff --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
 [ -z "$changed" ] && { echo "guards: empty range, pass"; exit 0; }
+messages="$(git -C "$ROOT" log --format=%B "$RANGE")" || die "git log $RANGE failed"
 
 # 1. Deleted test files without a Test-Change trailer (with the trailer the deletion is accepted and nothing is logged)
-deleted_tests="$(git -C "$ROOT" diff --diff-filter=D --name-only "$BASE" "$HEAD_" | grep -E 'src/(test|itest|archTest)/.*\.kt$' || true)"
-if [ -n "$deleted_tests" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | grep '^Test-Change:' >/dev/null; then
+deleted="$(git -C "$ROOT" diff --diff-filter=D --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
+deleted_tests="$(echo "$deleted" | grep -E 'src/(test|itest|archTest)/.*\.kt$' || true)"
+if [ -n "$deleted_tests" ] && ! trailer Test-Change; then
   violation "test files deleted: $(echo "$deleted_tests" | tr '\n' ' ')" \
     "Restore them. If a test is genuinely obsolete, explain in the commit body and add the trailer 'Test-Change: <reason>'." deleted-test-file
 elif [ -n "$deleted_tests" ]; then
   echo "  (Test-Change trailer present — deletion accepted)"
 fi
 
-# 2. Net assertion decrease without Test-Change trailer
-count_asserts() { git -C "$ROOT" grep -c -E 'assertThat\(|assertThrows|assertThatThrownBy|assertTrue\(|assertFalse\(|assertEquals\(' "$1" -- '*/src/test/*' '*/src/itest/*' '*/src/archTest/*' 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}'; }
-before="$(count_asserts "$BASE")"; after="$(count_asserts "$HEAD_")"
-if [ "$after" -lt "$before" ] && ! git -C "$ROOT" log --format=%B "$RANGE" | grep '^Test-Change:' >/dev/null; then
+# 2. Net assertion decrease without Test-Change trailer (git grep exits 1 when nothing matches; 2 or more is a failure)
+count_asserts() {
+  local out
+  out="$(git -C "$ROOT" grep --text -c -E 'assertThat\(|assertThrows|assertThatThrownBy|assertTrue\(|assertFalse\(|assertEquals\(' "$1" -- '*/src/test/*' '*/src/itest/*' '*/src/archTest/*')"
+  [ $? -le 1 ] || die "git grep $1 failed"
+  printf '%s\n' "$out" | awk -F: '{s+=$NF} END {print s+0}'
+}
+before="$(count_asserts "$BASE")" || exit 2; after="$(count_asserts "$HEAD_")" || exit 2
+if [ "$after" -lt "$before" ] && ! trailer Test-Change; then
   violation "assertions decreased $before → $after" "Restore the assertions, or justify with a 'Test-Change: <reason>' trailer." assertion-decrease
 fi
 
 # 3. New suppression in any Kotlin or Java source, tests included: @Suppress, @file:Suppress, @SuppressWarnings, @[Suppress(...)]
-if git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java' | grep -E '^\+.*Suppress(Warnings)?\(' >/dev/null; then
+src_diff="$(git -C "$ROOT" diff "${DIFF[@]}" "$BASE" "$HEAD_" -- '*/src/*.kt' '*/src/*.java')" || die "git diff $RANGE failed"
+if printf '%s\n' "$src_diff" | grep -E '^\+.*Suppress(Warnings)?\(' >/dev/null; then
   violation "new suppression under src/ (@Suppress, @file:Suppress, @SuppressWarnings or @[Suppress(...)])" "Fix the reported issue instead of suppressing it: a suppression hides findings in tests as much as in production code. The array form @[Suppress(...)] counts too: detekt honours it and ktfmt keeps it. If the rule is wrong, change config/detekt/detekt.yml in a harness ticket." new-suppress
 fi
 
@@ -1332,27 +1394,38 @@ if echo "$changed" | grep -E 'detekt-baseline[^/]*\.xml$' >/dev/null; then
 fi
 
 # 5. Merged migrations edited (modified, not added)
-edited_mig="$(git -C "$ROOT" diff --diff-filter=M --name-only "$BASE" "$HEAD_" | grep -E 'db/migration/V.*\.sql$' || true)"
+modified="$(git -C "$ROOT" diff --diff-filter=M --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
+edited_mig="$(echo "$modified" | grep -E 'db/migration/V.*\.sql$' || true)"
 [ -n "$edited_mig" ] && violation "merged migration edited: $(echo "$edited_mig" | tr '\n' ' ')" \
   "Revert the edit and add a new V<yyyyMMdd>_<hhmm>__<slug>.sql that fixes forward." migration-edited
 
-# 6. Hangul added to committed artifacts (English-only, D1) — README.ko.md is the sole exception.
-#    Only lines the range adds count: a file that already holds Korean (Plan A embeds README.ko.md) stays editable.
-#    awk tags each added line with its file ('+++ <path>' header; -M keeps a pure rename free of added lines), grep matches.
-#    Portable byte-range match (macOS grep has no -P): UTF-8 lead bytes EA–ED cover U+A000–U+D7FF incl. Hangul syllables.
-hangul="$(git -C "$ROOT" diff -M --no-prefix "$BASE" "$HEAD_" -- . ':(exclude)README.ko.md' ':(exclude)docs/research/' \
+# 6. Hangul added to committed artifacts or written in the range's commit messages (English-only, D1) — README.ko.md
+#    is the sole exception. Only lines the range adds count: a file that already holds Korean (Plan A embeds
+#    README.ko.md) stays editable. awk tags each added line with its file ('+++ <path>' header; -M keeps a pure rename
+#    free of added lines), grep matches. Portable byte-range match (macOS grep has no -P): UTF-8 lead bytes EA–ED cover
+#    U+A000–U+D7FF incl. Hangul syllables; E3 84–86 the compatibility jamo; E1 84–87 the Hangul Jamo block.
+HANGUL=$'([\xEA-\xED][\x80-\xBF][\x80-\xBF]|\xE3[\x84-\x86][\x80-\xBF]|\xE1[\x84-\x87][\x80-\xBF])'
+added="$(git -C "$ROOT" diff "${DIFF[@]}" -M --no-prefix "$BASE" "$HEAD_" -- . ':(exclude)README.ko.md' ':(exclude)docs/research/')" \
+  || die "git diff $RANGE failed"
+hangul="$(printf '%s\n' "$added" \
   | LC_ALL=C awk '/^diff --git /{h=1} h && /^\+\+\+ /{f=substr($0, 5)} /^@@/{h=0} !h && /^\+/{print f "\t" $0}' \
-  | LC_ALL=C grep -E $'\t\\+.*[\xEA-\xED][\x80-\xBF][\x80-\xBF]' | cut -f1 | sort -u || true)"
+  | LC_ALL=C grep -E $'\t\\+.*'"$HANGUL" | cut -f1 | sort -u || true)"
 [ -n "$hangul" ] && violation "Korean text added in: $(echo "$hangul" | tr '\n' ' ')" \
   "Committed artifacts are English (ADR D1). Translate, or move the text to the owner's central wiki." non-english
+if printf '%s\n' "$messages" | LC_ALL=C grep -E "$HANGUL" >/dev/null; then
+  violation "Korean text in a commit message of $RANGE" \
+    "Commit messages are English (ADR D1). Reword the commit (git commit --amend -F <file> for the last one)." non-english
+fi
 
 # 7. Secrets
-if git -C "$ROOT" diff "$BASE" "$HEAD_" | grep -E '^\+' | grep -E 'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{36,}|xox[baprs]-[0-9A-Za-z-]{10,}' >/dev/null; then
+all_diff="$(git -C "$ROOT" diff "${DIFF[@]}" "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
+if printf '%s\n' "$all_diff" | grep -E '^\+' | grep -E 'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{36,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk-ant-[A-Za-z0-9_-]{20,}' >/dev/null; then
   violation "secret-like literal added" "Remove it, rotate the credential, load it from the environment." secret-literal
 fi
 
 # 8. New production .kt without any test change in the range (test pair)
-new_prod="$(git -C "$ROOT" diff --diff-filter=A --name-only "$BASE" "$HEAD_" | grep -E 'src/main/kotlin/.*\.kt$' | grep -v -E 'Module\.kt$|package-info' || true)"
+added_files="$(git -C "$ROOT" diff --diff-filter=A --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
+new_prod="$(echo "$added_files" | grep -E 'src/main/kotlin/.*\.kt$' | grep -v -E 'Module\.kt$|package-info' || true)"
 tests_touched="$(echo "$changed" | grep -E 'src/(test|itest|archTest)/' || true)"
 if [ -n "$new_prod" ] && [ -z "$tests_touched" ]; then
   violation "new production Kotlin without tests: $(echo "$new_prod" | tr '\n' ' ')" \
@@ -1361,7 +1434,8 @@ fi
 
 # 9. detekt touched outside the root build script: one module line (actions.clear(), which also drops
 #    DetektGateGuard, enabled = false, setSource(files())) would switch the gate off and still exit 0.
-detekt_lines="$(git -C "$ROOT" diff "$BASE" "$HEAD_" -- '*.gradle.kts' ':(exclude)build.gradle.kts' | grep -E '^\+[^+]' | grep -E '[Dd]etekt' || true)"
+gradle_diff="$(git -C "$ROOT" diff "${DIFF[@]}" "$BASE" "$HEAD_" -- '*.gradle.kts' ':(exclude)build.gradle.kts')" || die "git diff $RANGE failed"
+detekt_lines="$(printf '%s\n' "$gradle_diff" | grep -E '^\+[^+]' | grep -E '[Dd]etekt' || true)"
 [ -n "$detekt_lines" ] && violation "detekt configured outside the root build.gradle.kts: $(echo "$detekt_lines" | head -3 | tr '\n' ' ')" \
   "detekt is configured only in the root build.gradle.kts (Plan A Task 3); move the change there in a harness ticket." detekt-outside-root
 
@@ -1383,10 +1457,16 @@ Z40="0000000000000000000000000000000000000000"
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -z "${local_ref:-}" ] && continue
   case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac          # tags/notes pass
+  if [ "$remote_ref" = refs/heads/main ]; then                          # main changes only through a reviewed PR
+    "$LOG" pre-push-guard push-to-main "$local_ref -> $remote_ref"
+    echo "✖ pushes to main are refused — push your branch and open a PR (/pull-request)." >&2
+    exit 1
+  fi
   [ "$local_sha" = "$Z40" ] && continue                                 # deletions pass
   # Base = where the branch leaves main, on every push (never $remote_sha): after 'git merge origin/main'
-  # the old remote tip would pull other PRs' commits, trailers and deletions into the range.
-  base="$(git merge-base origin/main "$local_sha" 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -1)"
+  # the old remote tip would pull other PRs' commits, trailers and deletions into the range. No merge-base →
+  # empty base → guards.sh falls back to origin/main and, if that does not resolve either, asks for a fetch.
+  base="$(git merge-base refs/remotes/origin/main "$local_sha" 2>/dev/null)"
 
   # --- guards: fail-closed ---
   if [ -x "$ROOT/scripts/guards.sh" ]; then
@@ -1404,8 +1484,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   if ! git diff --quiet "$base" "$local_sha" -- docs/llm-wiki/wiki/ ':(exclude)docs/llm-wiki/wiki/concepts/lessons.md' 2>/dev/null; then
     continue                                                            # wiki page or ADR changed → fine
   fi
-  if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:'; then
-    "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:')"
+  if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:[[:space:]]*[^[:space:]]'; then   # needs a reason
+    "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:[[:space:]]*[^[:space:]]')"
     continue
   fi
   # code-only ranges without decisions are common; block only when the range touched source or harness
@@ -1500,6 +1580,8 @@ git commit -m "chore: add fail-closed constitution guards and pre-push wiki gate
 /scripts/                  @BrokenFinger98
 /docs/llm-wiki/wiki/decisions/  @BrokenFinger98
 /config/detekt/            @BrokenFinger98
+# Attributes decide how diffs and merges treat files (guards.sh diffs with --text; merge drivers still apply).
+/.gitattributes            @BrokenFinger98
 # Build scripts can switch a gate off in one line (guards.sh check 9 is the machine half).
 /build.gradle.kts          @BrokenFinger98
 *.gradle.kts               @BrokenFinger98

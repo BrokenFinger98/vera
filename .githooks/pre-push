@@ -9,10 +9,16 @@ Z40="0000000000000000000000000000000000000000"
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -z "${local_ref:-}" ] && continue
   case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac          # tags/notes pass
+  if [ "$remote_ref" = refs/heads/main ]; then                          # main changes only through a reviewed PR
+    "$LOG" pre-push-guard push-to-main "$local_ref -> $remote_ref"
+    echo "✖ pushes to main are refused — push your branch and open a PR (/pull-request)." >&2
+    exit 1
+  fi
   [ "$local_sha" = "$Z40" ] && continue                                 # deletions pass
   # Base = where the branch leaves main, on every push (never $remote_sha): after 'git merge origin/main'
-  # the old remote tip would pull other PRs' commits, trailers and deletions into the range.
-  base="$(git merge-base origin/main "$local_sha" 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -1)"
+  # the old remote tip would pull other PRs' commits, trailers and deletions into the range. No merge-base →
+  # empty base → guards.sh falls back to origin/main and, if that does not resolve either, asks for a fetch.
+  base="$(git merge-base refs/remotes/origin/main "$local_sha" 2>/dev/null)"
 
   # --- guards: fail-closed ---
   if [ -x "$ROOT/scripts/guards.sh" ]; then
@@ -30,8 +36,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   if ! git diff --quiet "$base" "$local_sha" -- docs/llm-wiki/wiki/ ':(exclude)docs/llm-wiki/wiki/concepts/lessons.md' 2>/dev/null; then
     continue                                                            # wiki page or ADR changed → fine
   fi
-  if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:'; then
-    "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:')"
+  if git log --format=%B "$base..$local_sha" 2>/dev/null | grep -q '^Wiki-Skip:[[:space:]]*[^[:space:]]'; then   # needs a reason
+    "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:[[:space:]]*[^[:space:]]')"
     continue
   fi
   # code-only ranges without decisions are common; block only when the range touched source or harness

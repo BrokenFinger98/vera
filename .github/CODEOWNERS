@@ -7,6 +7,8 @@
 /scripts/                  @BrokenFinger98
 /docs/llm-wiki/wiki/decisions/  @BrokenFinger98
 /config/detekt/            @BrokenFinger98
+# Attributes decide how diffs and merges treat files (guards.sh diffs with --text; merge drivers still apply).
+/.gitattributes            @BrokenFinger98
 # Build scripts can switch a gate off in one line (guards.sh check 9 is the machine half).
 /build.gradle.kts          @BrokenFinger98
 *.gradle.kts               @BrokenFinger98
