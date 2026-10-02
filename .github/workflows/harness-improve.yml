@@ -67,7 +67,9 @@ jobs:
               - Skip an item that already has an open PR or issue (gh pr list, gh issue list).
               - Claude Code denies your writes under .claude/ in this run, so a proposal that touches .claude/rules/ or
                 .claude/hooks/ is ONE issue: label harness, title "harness: promote <slug>" (prune: "harness: prune <yyyymmdd>"),
-                body = the evidence and the exact patch as a fenced diff, applied later in a local ticket session.
+                body = the task template (sections Goal, Context, Acceptance criteria (EARS), Non-goals, Verify, Risks / Rollback;
+                owned module harness) with the evidence and the exact patch as a fenced diff inside Context, applied
+                later in a local ticket session.
                 Every other proposal is a pull request.
               - A pull request gets its own branch from origin/main, named harness/promote-<slug> or harness/prune-<yyyymmdd>
                 (CLAUDE.md exempts these branches from the issue rule), label harness, plus test-change when it touches

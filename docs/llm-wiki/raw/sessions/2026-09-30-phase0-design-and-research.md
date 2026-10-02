@@ -1,7 +1,7 @@
 # Phase 0 design and 2026-09 methodology research — English digest
 
 > English digest of the owner's Korean research notes dated 2026-09-30 (not committed, per D1), written 2026-10-01.
-> The notes start from the design chat https://claude.ai/share/d6bca3d8-b6a6-4622-a173-21a9ceac03b4. `[repo: …]` marks a later repository measurement that differs.
+> The notes start from the origin design chat (2026-09-30). `[repo: …]` marks a later repository measurement that differs.
 
 ## 1. Origin design chat — what it decided
 - Insight: customers buy evidence that they control their IT, not software; that value holds only while data matches reality — data rot is the main enemy.
@@ -13,7 +13,7 @@
 - Storage: fixed attributes as real columns, extension attributes as JSONB (generated columns only where an index needs one), dynamic DDL compared later; PostgreSQL chosen for transactional DDL.
 - Ingestion: Kafka topic `ci.observations` keyed by the normalized identifier → idempotent reconciliation consumer → uncertain matches go to a needs-confirmation queue.
 - Roadmap: 1 metadata engine + dynamic CRUD → 2 inheritance, references, cache → 3 rules, ACL, lifecycle → 3.5 ingestion + reconciliation → 4 layering and upgrade → 5 multi-instance.
-- Constraints: public sources only — no proprietary code, designs or customer data; no ServiceNow names or UI.
+- Constraints: public sources only — no proprietary code, designs or customer data; no ServiceNow trademarks, UI or copied code (generic conventions such as the `sys_`/`u_` table prefixes are fine).
 
 ## 2. Methodology consensus, 2026-09 (primary sources read on 2026-09-30)
 - Anthropic: Claude Code best practices (explore → plan → implement → commit; gate strength prompt < `/goal` < Stop hook < verifier subagent; skip the plan for a one-sentence diff), Effective harnesses for long-running agents (2025-11-26: one feature per session, progress file, tests never edited), AI-native SDLC (2026-07-21: bugs fed back into CLAUDE.md).

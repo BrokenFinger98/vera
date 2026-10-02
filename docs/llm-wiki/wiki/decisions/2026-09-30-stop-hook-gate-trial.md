@@ -15,7 +15,7 @@ The owner deleted a global stop-verify hook in 2026-07 after it never fired; an 
 ## Options considered
 No Stop gate · Stop gate always · trial with audit.
 ## Decision
-`stop-gate.sh` runs `scripts/check.sh` when source files changed, skips when another Gradle client is running, and logs every block. After 30 days: keep if it blocked a real mistake at least once, otherwise delete.
+`stop-gate.sh` runs `scripts/check.sh` when source or build files changed, skips only while a Gradle build of the same checkout runs (other worktrees build into their own `build/`), and logs every block and skip. After 30 days: keep if it blocked a real mistake at least once, otherwise delete.
 ## Rationale
 Harness-debt-audit principle: a mechanism earns its place with evidence of firing.
 ## Accepted costs

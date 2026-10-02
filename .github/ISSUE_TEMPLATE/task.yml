@@ -16,7 +16,7 @@ body:
       value: |
         - Spec:
         - ADR:
-        - Owned module (Modulith module + Gradle project):
+        - Owned module (Modulith module + Gradle project, or `harness` for gate/hook/workflow work):
         - Blocked by:   Blocks:
     validations:
       required: true

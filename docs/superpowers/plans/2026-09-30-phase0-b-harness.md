@@ -4,7 +4,7 @@
 
 **Goal:** Wire the repository built by Plan 0-A into an agent-first harness: a short constitution (`CLAUDE.md`), path-scoped rules, project skills for the GitHub flow, hooks and git gates that enforce the rules deterministically, CI checks and branch protection, the repo-local LLM wiki with the nine Phase 0 ADRs, session-state files, and the closed self-improvement loop (event log → counted lessons → weekly proposal PRs → monthly prune PRs).
 
-**Architecture:** Instructions stay short and advisory (`CLAUDE.md` ≈ 100 lines, `.claude/rules/*.md` loaded by path); enforcement is deterministic and layered (PostToolUse format → PreToolUse deny → Stop gate → pre-push guards → CI → branch protection → human). Every gate firing is appended to `.harness/events.jsonl` by one script, `log-gate-event.sh`, which is the data source for the weekly `harness-improve` routine. Knowledge lives in `docs/llm-wiki/` (decisions, concepts, counted lessons); position lives in `.harness/state/`.
+**Architecture:** Instructions stay short and advisory (`CLAUDE.md` ≈ 100 lines, `.claude/rules/*.md` loaded by path); enforcement is deterministic and layered (PostToolUse format → PreToolUse deny → Stop gate → pre-push guards → CI → branch protection → human). Every gate firing is appended by one script, `log-gate-event.sh`, to a shared, untracked log in the git common dir (one file for the main checkout and every worktree); `scripts/publish-events.sh`, run by `/finish-task` and `/pull-request`, copies new lines into `.harness/events.jsonl`, the data source for the weekly `harness-improve` routine. Knowledge lives in `docs/llm-wiki/` (decisions, concepts, counted lessons); position lives in `.harness/state/`.
 
 **Tech Stack:** Bash (hooks, gates), `jq`, `gh` CLI (authenticated as BrokenFinger98), Claude Code 2.1.x hooks/skills/rules/workflows, GitHub Actions with `anthropics/claude-code-action@v1`, Markdown.
 
@@ -69,9 +69,9 @@ Coding conventions: `docs/development-rules.md`. Domain words: `docs/domain/glos
 ## Role
 
 You build Vera, a metadata-driven enterprise platform engine (ServiceNow-style) with an ITAM app
-on top. The owner approves tickets and specs, reviews designs and approves merges; **you write all
-code, tests and docs**, run the flow and prove completion with evidence (command output,
-`git diff --stat`), never with assertions.
+on top. The owner gives three approvals per ticket (preview, design review, merge), plus the spec of
+a large feature; **you write all code, tests and docs**, run the flow and prove completion with
+evidence (command output, `git diff --stat`), never with assertions.
 
 ## Immutable decisions (change = PR + ADR in `docs/llm-wiki/wiki/decisions/`)
 
@@ -91,7 +91,7 @@ code, tests and docs**, run the flow and prove completion with evidence (command
 - Weakening or deleting a test, or adding `@Suppress`, to get green. Fix the code.
 - detekt baseline files, weakening detekt's `failOnSeverity = Info`, lowering Kover `minBound`.
 - `cd` inside a Bash command (deny rules on `.env*` make it prompt; use absolute paths, `git -C`).
-- Direct commits or pushes to `main`; PR > 400 changed lines without a split rationale.
+- Direct commits or pushes to `main`; PR > 400 changed lines (`.harness/events.jsonl` excluded) without a split rationale.
 - Work without an issue (exception: harness-improve proposal PRs on `harness/*` branches).
 - `--no-verify`, `git commit -n`, changing or unsetting `core.hooksPath` (CI re-runs the guards).
 - AI attribution in commits or PRs (`.claude/settings.json` turns Claude Code's off).
@@ -125,9 +125,9 @@ The `test-change` PR label is separate: it marks any change under `src/test|ites
 You run every step; the owner approves the ticket preview (/ticket), the design review and the merge (/pull-request).
 Explore → Plan → Implement → Verify. Skip the plan only when the diff fits one sentence.
 Large features: interview the owner, write the spec to `docs/superpowers/specs/`, execute in a fresh session.
-Parallel work: one owned module per ticket plus the always-allowed files (`.harness/state/progress.md`,
-`.harness/events.jsonl`, `docs/llm-wiki/**`, `docs/domain/glossary.md`, `docs/specs/<module>.md`);
-root build files and migrations only in solo tickets.
+Parallel work: one owned module per ticket (`harness` for gate, hook and workflow work) plus the
+always-allowed files (`.harness/state/progress.md`, `.harness/events.jsonl`, `docs/llm-wiki/**`,
+`docs/domain/glossary.md`, `docs/specs/<module>.md`); root build files and migrations only in solo tickets.
 
 ## Evidence format for completion claims
 
@@ -151,6 +151,8 @@ Absolute paths under `<root>`: `git -C <root> ...`, `<root>/scripts/*.sh`.
 Scripts print `RESULT ... exit=N`; quote it. Commit messages and PR bodies go in files (`-F`,
 `--body-file`) because the danger hook screens the whole command line.
 Do not run Gradle while a worker subagent is running Gradle (shared `build/` → false failures).
+Kotlin LSP is available: prefer findReferences / workspaceSymbol / hover over grep for symbols; restart the
+session after installing or upgrading kotlin-lsp.
 ```
 
 - [ ] **Step 2: Create the `AGENTS.md` symlink and `REVIEW.md`**
@@ -171,7 +173,7 @@ immutable decision in `CLAUDE.md`**. Style is owned by ktfmt and detekt — neve
 
 - **blocking** — wrong behaviour, data loss, security hole, module-boundary violation, test weakened/deleted
   without a `Test-Change:` trailer and explanation, migration edited, immutable decision contradicted,
-  PR > 400 lines without split rationale.
+  PR > 400 lines (`.harness/events.jsonl` excluded) without split rationale.
 - **major** — requirement from the ticket's acceptance criteria not covered by a test; missing rollback note.
 - **minor** — naming that contradicts `docs/domain/glossary.md`; missing ADR for an evident decision;
   domain identifier or name not wrapped in a `value class`; `if … else` where an early return works.
@@ -998,7 +1000,8 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 3. Show the preview; the owner approves it (Yes / Edit / Cancel). Create nothing before a Yes.
 4. `gh issue create --title "<Type> title" --label task --label <type> --milestone phase-<n> --body-file <tmp>`
 5. `git -C <root> fetch origin main && git -C <root> switch -c <type>/<n>-<slug> origin/main`
-   (with Orca, run `orca worktree create --name <type>/<n>-<slug> --base-branch origin/main --issue <n>` instead: one ticket = one worktree.)
+   With Orca instead: `orca worktree create --name <type>/<n>-<slug> --base-branch origin/main --issue <n> --agent claude --prompt "/start-task <n>"` (one ticket = one worktree).
+   Check with `orca worktree show --worktree issue:<n>` that the branch is exactly `<type>/<n>-<slug>`; the new worktree's agent continues with /start-task and this session's part ends.
 
 ## Task template (issue body)
 ```
@@ -1008,7 +1011,7 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 ## Context
 - Spec: docs/superpowers/specs/<file>#<section> (or "none")
 - ADR: <link or "may need one">
-- Owned module: <Modulith module, e.g. metadata> (Gradle project `:platform:metadata`) — plus the always-allowed files in CLAUDE.md
+- Owned module: <Modulith module, e.g. metadata> (Gradle project `:platform:metadata`) — or `harness` for gate/hook/workflow work — plus the always-allowed files in CLAUDE.md
 - Blocked by: #<n> (or "none")   Blocks: #<n> (or "none")
 
 ## Acceptance criteria (EARS)
@@ -1030,7 +1033,7 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 ```
 
 ## Labels
-`task` always; type label; `harness` for gate/hook work; milestone `phase-<n>`.
+`task` always; type label; `harness` for gate/hook/workflow work; milestone `phase-<n>`.
 ```
 
 - [ ] **Step 2: Write `gated-commit/SKILL.md`**
@@ -1089,12 +1092,13 @@ description: Push the branch, open the GitHub PR with real evidence, drive the r
 - Labels: `test-change` if any file under `src/test|itest|archTest` changed.
 
 ## Create and merge
-1. `gh pr create --fill-first --body-file <tmp> [--label test-change]`
-2. `gh pr checks --watch` until all required checks pass. Log each failing required check with `<root>/.claude/hooks/log-gate-event.sh ci <check> <run url>`, fix, push.
-   `claude-review` runs on opened/ready_for_review only: after pushing a fix, re-trigger it with `gh pr ready --undo && gh pr ready`. Fix its blocking items and resolve each review thread you addressed (`gh api graphql`, mutation `resolveReviewThread`; conversation resolution is required).
+1. `gh pr create --title "<type>: <subject>" --body-file <f> [--label test-change]` — not `--fill-first`: the PR title becomes the squash commit title.
+2. `gh pr checks --watch` until all required checks pass. Log each failing required check with `<root>/.claude/hooks/log-gate-event.sh ci <check> <run url>`, fix, push. A failure the branch cannot fix (a missing secret, an outage) is reported to the owner, not pushed around.
+   `claude-review` runs on opened/ready_for_review only: after pushing a fix, re-trigger it with `gh pr ready --undo && gh pr ready`. Fix its blocking items; reply to and resolve every review thread, including findings you dismiss (`gh api graphql`, mutation `resolveReviewThread`; conversation resolution is required).
 3. Behind or conflicting with `origin/main`: `git -C <root> merge origin/main` — never rebase and force push (blocked) — keep both sides' entries in state files, re-run `./scripts/check.sh`, push.
-4. Ask the owner for the design review (the five items on the PR template's "Owner design review" line) and for explicit merge approval. Merge only after both.
-5. Merge. In a worktree: `gh pr merge --squash` (the repo deletes merged branches), then from the main checkout (`<main>` = the first path of `git worktree list`) run `git -C <main> pull --ff-only` and remove the worktree with `orca worktree rm --worktree branch:<branch>` or `git -C <main> worktree remove <path>`.
+4. Before asking for the merge approval, run `<root>/scripts/publish-events.sh`. If it reports `added=` above 0, commit `.harness/events.jsonl` via /gated-commit with `Wiki-Skip: event log` in the body, push and watch the checks again (events from that last push reach the log with the next ticket).
+5. Ask the owner for the design review (the five items on the PR template's "Owner design review" line) and for explicit merge approval. Merge only after both.
+6. Merge. In a worktree: `gh pr merge --squash` (after Task 13, the repo deletes merged branches), then from the main checkout (`<main>` = the first path of `git worktree list`) run `git -C <main> pull --ff-only` and remove the worktree with `orca worktree rm --worktree branch:<branch>` or `git -C <main> worktree remove <path>`.
    Without a worktree: `gh pr merge --squash --delete-branch`, then `git -C <root> switch main && git -C <root> pull --ff-only`.
 ```
 
@@ -1111,6 +1115,7 @@ description: Load a GitHub issue into the session (body, acceptance criteria, ow
 1. `gh issue view <n> --json title,body,labels,milestone` — read Goal, Context, EARS criteria, Non-goals, Verify, Blocked-by.
    If **Blocked by** names an open issue → stop and report; the ready queue excludes it.
 2. Confirm you are on `<type>/<n>-<slug>` and, when parallel, in your own worktree.
+   If the branch does not exist yet (an owner-filed or harness-improve issue), create it as in /ticket step 5.
 3. Re-read `.harness/state/goal.md`, `progress.md` (above the marker), and any ADR the ticket links.
 4. Explore the owned module only: existing tests first, then code. Use a subagent for anything wider.
    Before creating files, Read the `.claude/rules/*.md` whose `paths` match them — rules load when a matching file is read, not when one is written.
@@ -1133,7 +1138,7 @@ description: Close the loop on a ticket once the code is done and check.sh and i
 ## 1. Evidence (paste real output later into the PR)
 - `./scripts/check.sh` → keep the last 30 lines and the `RESULT` line.
 - `./scripts/itest.sh` → same.
-- `git -C <root> diff --stat origin/main...HEAD` → owned module plus the always-allowed files only? size ≤400 lines? If not, stop and split.
+- `git -C <root> diff --stat origin/main...HEAD` → owned module plus the always-allowed files only? size ≤400 lines (`.harness/events.jsonl` excluded)? If not, stop and split.
 
 ## 2. Independent review
 Run `/code-review` for a general pass, then the `critic` subagent: have it apply REVIEW.md's must-check list to `git -C <root> diff origin/main...HEAD`, then attack with: "Do not trust the implementer's claims. Verify by running. Attack: boundary values, null/empty, concurrency, ACL bypass, migration reversibility. Report gaps affecting correctness or requirements only." Fix blocking findings and log each one with `<root>/.claude/hooks/log-gate-event.sh critic <rule> <one line>`; list the rest with disposition.
@@ -1145,7 +1150,7 @@ Append to `.harness/state/progress.md` above `<!-- ARCHIVE -->`: `## [YYYY-MM-DD
 Answer three questions in one line each and merge into `docs/llm-wiki/wiki/concepts/lessons.md`:
 - What was slow? · What did the agent get wrong? · Which rule or check was missing?
 If an equivalent lesson exists, increment its `count:` and add the ticket number; otherwise add a new entry with `count: 1`.
-A lesson with `count: 3` is due for promotion (weekly routine opens the PR) — do not promote it yourself.
+A lesson with `count: 3` is due for promotion (the weekly routine opens a PR, or an issue for `.claude/rules|hooks`) — do not promote it yourself.
 
 ## 5. Decisions
 Any decision made → ADR via /wiki-ingest (push gate checks). None → step 6 adds the `Wiki-Skip: no decision` trailer.
@@ -1205,11 +1210,11 @@ docs/llm-wiki/
 ## lessons.md format (feeds the self-improvement loop)
 ```
 ### <lesson slug>
-count: <n> · tickets: #12, #15 · first: 2026-10-02 · last: 2026-10-09 · status: open|promoted|dropped
+count: <n> · tickets: #12, #15 · first: 2026-10-02 · last: 2026-10-09 · status: open|proposed|promoted|dropped
 what: <one line: what was slow / wrong / missing>
 fix: <what a rule, hook, test or lint would look like>
 ```
-`count` ≥ 3 → the weekly routine proposes a promotion PR; on merge the entry becomes `status: promoted` and moves to the bottom.
+`count` ≥ 3 → the weekly routine proposes a promotion (a PR, or an issue for `.claude/rules|hooks`) and marks the entry `status: proposed` with the link; once the owner merges it, the entry becomes `status: promoted` and moves to the bottom.
 
 ## Workflows
 - **ingest** — `/wiki-ingest`: read index → save raw → source stub → integrate into pages (merge, never overwrite) → index + links → log line.
@@ -1238,7 +1243,7 @@ Read this first. Every page is registered here; entries start with a date so mer
 - 2026-09-30 [[decisions/2026-09-30-human-approved-self-improvement-loop]] — D9: events → counted lessons → weekly proposal PRs → monthly prune PRs, owner merges
 
 ## Concepts
-- 2026-09-30 [[concepts/lessons]] — counted lessons feeding the self-improvement loop (open / promoted / dropped)
+- 2026-09-30 [[concepts/lessons]] — counted lessons feeding the self-improvement loop (open / proposed / promoted / dropped)
 
 ## Sources
 - 2026-09-30 [[sources/2026-09-30-phase0-design-and-research]] — origin chat + 2026-09 methodology research → spec + D1–D9
@@ -1267,7 +1272,7 @@ sources: []
 # Lessons (counted)
 
 Format and promotion rule: see `docs/llm-wiki/CLAUDE.md` → "lessons.md format". Entries are added by `/finish-task`.
-`count ≥ 3` → the weekly `harness-improve` routine opens a proposal PR. Promoted or dropped entries move below the line.
+`count ≥ 3` → the weekly `harness-improve` routine opens a proposal (a PR, or an issue for `.claude/rules|hooks`) and marks the entry `proposed`. Promoted or dropped entries move below the line.
 
 ## Open
 
@@ -1358,6 +1363,8 @@ git commit -m "docs: add repo-local LLM wiki schema, index, counted lessons and 
 **Files:**
 - Create: `scripts/guards.sh`, `.githooks/pre-push`
 - Modify: `.gitattributes` (union merge for the two append-only shared files)
+
+Both gates judge what the pushed branch adds since it left `main`. `guards.sh` reduces any base to the merge-base of base and head (files `main` gained after the fork never read as deleted), and the hook passes the branch's merge-base with `origin/main` on every push, never the remote tip. Pushes to `main` are refused outright. The wiki gate counts a change under `docs/llm-wiki/wiki/` other than `concepts/lessons.md` (`/finish-task` edits that file on every branch), or a `Wiki-Skip: <reason>` trailer, and blocks only when the range touches `platform/`, `apps/`, `ingestion/`, `bootstrap/`, `.claude/`, `.githooks/`, `.github/`, `scripts/`, `config/detekt/`, `gradle/`, `CLAUDE.md`, `REVIEW.md` or a root `*.gradle.kts`.
 
 - [ ] **Step 1: Write `scripts/guards.sh` (fail-closed constitution guards)**
 
@@ -1571,6 +1578,8 @@ tail -2 /Users/yu-sun00/Desktop/vera/.harness/events.jsonl
 
 Expected: two `✖` lines (`test files deleted`, `assertions decreased`), `exit=1`, and two `pre-push-guard` events in the log. Keep those two events: they are the first real evidence of a gate firing.
 
+Since Task 3 moved the gate-event log out of the tracked file, a re-run of this probe appends to the shared log `<git common dir>/vera-events.jsonl`, and `tail -2 .harness/events.jsonl` shows only what `scripts/publish-events.sh` has copied. The four probe lines published on 2026-10-02 carry `"probe":true` (the weekly routine skips them) and stay as the record.
+
 The same deletion with a `Test-Change:` trailer is accepted and logs nothing:
 
 ```bash
@@ -1687,7 +1696,7 @@ body:
       value: |
         - Spec:
         - ADR:
-        - Owned module (Modulith module + Gradle project):
+        - Owned module (Modulith module + Gradle project, or `harness` for gate/hook/workflow work):
         - Blocked by:   Blocks:
     validations:
       required: true
@@ -1913,7 +1922,9 @@ jobs:
               - Skip an item that already has an open PR or issue (gh pr list, gh issue list).
               - Claude Code denies your writes under .claude/ in this run, so a proposal that touches .claude/rules/ or
                 .claude/hooks/ is ONE issue: label harness, title "harness: promote <slug>" (prune: "harness: prune <yyyymmdd>"),
-                body = the evidence and the exact patch as a fenced diff, applied later in a local ticket session.
+                body = the task template (sections Goal, Context, Acceptance criteria (EARS), Non-goals, Verify, Risks / Rollback;
+                owned module harness) with the evidence and the exact patch as a fenced diff inside Context, applied
+                later in a local ticket session.
                 Every other proposal is a pull request.
               - A pull request gets its own branch from origin/main, named harness/promote-<slug> or harness/prune-<yyyymmdd>
                 (CLAUDE.md exempts these branches from the issue rule), label harness, plus test-change when it touches
@@ -1956,7 +1967,7 @@ Expected: `yaml ok`.
 - [ ] **Step 5: Owner — install the Claude GitHub App and set the OAuth token secret; commit**
 
 The owner runs the setup and the agent never handles the token value. Install https://github.com/apps/claude on `BrokenFinger98/vera` (the action trades the job's OIDC token for the App's installation token), then run `claude setup-token` locally and `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo BrokenFinger98/vera`, pasting the token at the prompt.
-Expected: `gh secret list --repo BrokenFinger98/vera` lists `CLAUDE_CODE_OAUTH_TOKEN`. Neither Claude workflow runs on the PR that adds it: the action skips a workflow that is not on the default branch yet.
+Expected: `gh secret list --repo BrokenFinger98/vera` lists `CLAUDE_CODE_OAUTH_TOKEN`. Neither Claude workflow runs on the PR that adds it: the action skips a workflow that is not on the default branch yet. PR #4 opens before this setup, which must be done before the Task 13 acceptance run and before the first scheduled `harness-improve` run (Mon 2026-10-05 06:00 KST).
 
 ```bash
 git add .github
@@ -2144,12 +2155,13 @@ git commit -m "feat: add the three saved fan-out workflows (audit, release revie
 # Goal (personal — gitignored)
 
 ## Where we are
-Phase 0 (environment and harness) is complete when the first metadata-engine ticket goes through the whole loop
-(issue → worktree → implement → gates → PR → review → squash) and every gate has fired at least once
-(`.harness/events.jsonl` has entries for stop-gate, pre-push-guard, wiki-gate, ci).
+Phase 0 (environment and harness) ends when the first harness ticket (a deferred hardening item, owned area `harness`)
+completes the whole loop (/ticket → worktree → implement → gates → PR → review → squash) and stop-gate, pre-push-guard,
+wiki-gate and ci events have each been published to `.harness/events.jsonl`. Phase 1 ticket 1 (the metadata engine) follows.
 
 ## Current ticket
-- Phase 1, ticket 1 (to be created with /ticket): metadata engine — `sys_table` / `sys_field` system tables (Flyway),
+- Phase 0 exit: the first deferred harness-hardening ticket (owned area `harness`; candidates in progress.md), through the whole loop.
+- Then Phase 1, ticket 1 (to be created with /ticket): metadata engine — `sys_table` / `sys_field` system tables (Flyway),
   `TableDefinition` / `FieldDefinition` domain, and a create-table use case that inserts the definitions and runs
   `CREATE TABLE u_<name>` in one transaction.
 - EARS (draft, refine in /brainstorming):
@@ -2160,7 +2172,7 @@ Phase 0 (environment and harness) is complete when the first metadata-engine tic
 
 ## Owner's standing instructions
 - The owner does not write code. Ask for decisions, not for implementations.
-- The owner approves three things: the ticket preview, the design review and the merge.
+- The owner approves three things per ticket: the preview, the design review and the merge (plus the spec for large features).
 - Never use employer code, designs, customer data or names.
 - English artifacts; Korean only in chat and README.ko.md.
 ```
@@ -2189,18 +2201,19 @@ Entries start with the date. Everything above the archive marker (the HTML comme
 
 ## [2026-10-02] Phase 0-B — harness, gates, wiki, self-improvement loop 🚧
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-b-harness.md`
-- Status: harness on PR #4 (this branch); acceptance run (Plan B Task 13) pending
-- CLAUDE.md (100 lines) · 5 rules · 8 skills · 4 hooks + the `log-gate-event.sh` writer · pre-push guards (9 checks + wiki gate; first firings logged: `.harness/events.jsonl` has 4 lines — stop-gate 1, block-danger 1, pre-push-guard 2 from the negative probe) · CI workflows: `ci.yml` only
-- Pending: GitHub templates and the `test-guard`, `claude-review` and `harness-improve` workflows (Task 8) · 3 saved fan-out workflows (Task 9)
-- ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
-- Next: Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md), after the acceptance run
+- Status: harness on PR #4 (this branch); the owner's GitHub App and secret, the merge, Task 13 protection and the acceptance run are pending
+- Exists: CLAUDE.md (102 lines) · 5 rules · 8 skills · 4 hooks + the `log-gate-event.sh` writer and `scripts/publish-events.sh` · pre-push guards (9 checks + wiki gate), hardened after the critic and final reviews · CI workflows: `ci.yml`, `test-guard.yml` (the `test-change` label job and the `guards` job, which runs the base commit's `guards.sh`), `claude-review.yml`, `harness-improve.yml` · 3 saved fan-out workflows · ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
+- Events: gate firings go to the shared untracked log in the git common dir and are published to `.harness/events.jsonl`; 4 probe lines (`"probe":true`: stop-gate 1, block-danger 1, pre-push-guard 2 from the negative probe) are published so far
+- Pending: the owner installs the Claude GitHub App and sets `CLAUDE_CODE_OAUTH_TOKEN` (before the acceptance run and before the first scheduled `harness-improve` run, Mon 2026-10-05 06:00 KST) · squash-merge PR #4 · Task 13 branch protection · the acceptance run, which is the first deferred harness-hardening ticket through the whole loop (owned area `harness`)
+- Deferred hardening tickets: test-weakening detection · harness-owned paths · migration rename/delete · danger-hook false negatives and positives · guard fixtures and `test-hooks.sh` in CI
+- Next: Phase 0 ends when that first harness ticket completes the loop and stop-gate, pre-push-guard, wiki-gate and ci events have each been published; Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md) follows
 
 <!-- ARCHIVE -->
 ```
 
-Evidence sources (2026-10-02): `RESULT` lines and test counts from `gh run view 36801975950 --repo BrokenFinger98/vera --log` (jobs `check` and `itest`); PR titles and merge times from `gh pr view <n> --repo BrokenFinger98/vera --json title,mergedAt,url`; the PoC 2 status from `curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/org/graalvm/polyglot/js-isolate-community/25.4.4.1.1/`; PoC 1 from the two `TransactionalDdlPocTest` cases in the `:bootstrap:itest` XML report after a forced re-run (`4 tests, 0 failed, 0 skipped`); PoC 3 and 4 from Plan 0-A Tasks 3 and 11. The 0-B counts come from `wc -l CLAUDE.md`, `ls .claude/rules .claude/skills .claude/hooks`, `jq '[.hooks[][] | .hooks[]] | length' .claude/settings.json`, the numbered checks in `scripts/guards.sh` and `jq -r .gate .harness/events.jsonl | sort | uniq -c`. `#4` is the next free number (`gh pr list --state all` ends at `#3` and `gh issue list --state all` is empty); confirm it when the PR is opened.
+Evidence sources (2026-10-02): `RESULT` lines and test counts from `gh run view 36801975950 --repo BrokenFinger98/vera --log` (jobs `check` and `itest`); PR titles and merge times from `gh pr view <n> --repo BrokenFinger98/vera --json title,mergedAt,url`; the PoC 2 status from `curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/org/graalvm/polyglot/js-isolate-community/25.4.4.1.1/`; PoC 1 from the two `TransactionalDdlPocTest` cases in the `:bootstrap:itest` XML report after a forced re-run (`4 tests, 0 failed, 0 skipped`); PoC 3 and 4 from Plan 0-A Tasks 3 and 11. The 0-B counts come from `wc -l CLAUDE.md`, `ls .claude/rules .claude/skills .claude/hooks`, `jq '[.hooks[][] | .hooks[]] | length' .claude/settings.json`, the numbered checks in `scripts/guards.sh`, `ls .github/workflows .claude/workflows` and `jq -r .gate .harness/events.jsonl | sort | uniq -c`. `#4` is the next free number (`gh pr list --state all` ends at `#3` and `gh issue list --state all` is empty); confirm it when the PR is opened.
 
-The intro line does not spell the marker out: `inject-state.sh` stops at the first line that contains the marker string, so a literal mention above the real marker drops every entry from the injection (the earlier wording injected only the `# Progress` title). Keep it that way in every entry.
+The intro line does not spell the marker out: `inject-state.sh` stops only at a line that IS the marker (the comment on a line of its own, trailing blanks allowed), so prose that quotes it cannot cut the injection short (an earlier version stopped at any line that contained the string and injected only the `# Progress` title). The marker stays the last line.
 
 - [ ] **Step 3: Write `.harness/metrics.md`**
 
@@ -2209,12 +2222,12 @@ The intro line does not spell the marker out: `inject-state.sh` stops at the fir
 
 | week | merged PRs | avg changed lines/PR | gate firings (rule:count) | critic blocking/PR | CI failure rate | regressions | time-to-green (median) |
 |---|---|---|---|---|---|---|---|
-| 2026-W40 (to 2026-10-02) | 3 | 558 | stop-gate/check.sh-failed:1, block-danger/git-discard-all:1, pre-push-guard/deleted-test-file:1, pre-push-guard/assertion-decrease:1 (the pre-push-guard pair is the negative probe) | – | 11% (1 of 9 completed runs; 1 cancelled run not counted) | 0 | – |
+| 2026-W40 (to 2026-10-02) | 3 | 558 | none counted (4 probe events, `"probe":true`, are skipped: stop-gate/check.sh-failed, block-danger/git-discard-all, pre-push-guard/deleted-test-file and assertion-decrease) | – | 11% (1 of 9 completed runs; 1 cancelled run not counted) | 0 | – |
 ```
 
 Computed 2026-10-02 for ISO week 2026-W40 (Mon 2026-09-28 to Sun 2026-10-04), so far:
 - Merged PRs and changed lines: `gh pr list --repo BrokenFinger98/vera --state merged --search "merged:>=2026-09-28" --json number,additions,deletions` gives #1 (54 changed lines), #2 (3) and #3 (1618); 3 PRs, (54 + 3 + 1618) / 3 = 558.
-- Gate firings: `jq -r '"\(.gate)/\(.rule)"' .harness/events.jsonl | sort | uniq -c`, all four events fall in the week. The two `pre-push-guard` events come from the Task 7 negative probe (branch `tmp/guard-negative`).
+- Gate firings: `jq -r 'select(.probe != true) | "\(.gate)/\(.rule)"' .harness/events.jsonl | sort | uniq -c` lists nothing: all four events fall in the week, but they carry `"probe":true` (deliberate gate tests; the two `pre-push-guard` ones come from the Task 7 negative probe on branch `tmp/guard-negative`), which the routine skips, so none counts as a firing.
 - CI failure rate: `gh run list --repo BrokenFinger98/vera --created ">=2026-09-28" --limit 200 --json conclusion,event,headBranch` gives 10 runs: 8 success, 1 failure (the bootstrap push, fixed by PR #1), 1 cancelled. The rate is failures over completed runs, 1 / (8 + 1).
 - Regressions: `gh issue list --repo BrokenFinger98/vera --state all` is empty, so no bug is filed against a merged ticket.
 - Critic blocking and time-to-green stay `–`: no critic event exists yet, and neither the spec nor the harness-improve prompt defines a time-to-green formula.
@@ -2237,7 +2250,7 @@ git commit -m "docs: add session state files, progress record and harness metric
 
 - [ ] **Step 1: Write the ADRs (same frontmatter pattern; bodies below)**
 
-Frontmatter for every file (adjust `tags`; D3, rewritten on 2026-10-01, also sets `updated: 2026-10-01`):
+Frontmatter for every file (adjust `tags`; D3, rewritten on 2026-10-01, sets `updated: 2026-10-01`; D9, revised on 2026-10-02, sets `updated: 2026-10-02`):
 
 ```yaml
 ---
@@ -2267,7 +2280,7 @@ Same rule as the owner's programmers-tracker repo; consistent with the "docs are
 ## Accepted costs
 Reading friction for the owner; Korean research notes live in the owner's central wiki instead of this repo. Guard: `scripts/guards.sh` check 6.
 ## Outcome
-`.gitignore` excludes `docs/research/`; pre-push guard rejects Hangul outside `README.ko.md`.
+`.gitignore` excludes `docs/research/`; the pre-push guard rejects newly added Hangul (added lines and commit messages) outside `README.ko.md`; the CI `guards` job runs the same script.
 ```
 
 `2026-09-30-stack-baseline-sept-2026.md`:
@@ -2341,7 +2354,7 @@ Orca: one ticket = one worktree = one terminal, at most three concurrent. Ticket
 ## Rationale
 Reuses installed tooling and experience; module ownership is the single-writer principle that prevents merge hell.
 ## Accepted costs
-Orca is a third-party app that the skills drive through its CLI (`orca worktree create/rm`); worktrees share the Gradle daemon and can produce false Stop-gate failures (hook skips when another build runs).
+Orca is a third-party app that the skills drive through its CLI (`orca worktree create/rm`); worktrees share the Gradle daemon but each builds into its own `build/`, and the Stop gate skips only while a Gradle build of the same checkout runs.
 ## Outcome
 `.worktreeinclude`; `start-task` checks for blockers before work begins.
 ```
@@ -2375,7 +2388,7 @@ The owner deleted a global stop-verify hook in 2026-07 after it never fired; an 
 ## Options considered
 No Stop gate · Stop gate always · trial with audit.
 ## Decision
-`stop-gate.sh` runs `scripts/check.sh` when source files changed, skips when another Gradle client is running, and logs every block. After 30 days: keep if it blocked a real mistake at least once, otherwise delete.
+`stop-gate.sh` runs `scripts/check.sh` when source or build files changed, skips only while a Gradle build of the same checkout runs (other worktrees build into their own `build/`), and logs every block and skip. After 30 days: keep if it blocked a real mistake at least once, otherwise delete.
 ## Rationale
 Harness-debt-audit principle: a mechanism earns its place with evidence of firing.
 ## Accepted costs
@@ -2413,13 +2426,13 @@ The cycle every 2026 source ends with — remember/compound/improve — was miss
 ## Options considered
 Manual only · fully autonomous rule edits · machine-proposed, human-merged.
 ## Decision
-Capture: `log-gate-event.sh` appends every gate firing to `.harness/events.jsonl`. Distill: `/finish-task` writes a counted retro to `lessons.md`. Promote: weekly `harness-improve` opens one PR per lesson with count ≥ 3 or rule fired ≥ 3 times, proposing exactly one rule/hook/lint/test change. Prune: monthly PR deleting rules with zero firings in 30 days. Measure: weekly metrics line. Only the owner merges.
+Capture: hooks and guards append every gate firing, through `log-gate-event.sh`, to an untracked log shared by all worktrees (`<git common dir>/vera-events.jsonl`); `/finish-task` and `/pull-request` publish its new lines to `.harness/events.jsonl` with `scripts/publish-events.sh`, and the agent logs critic and ci events itself (CI does not parse its checks). Distill: `/finish-task` writes a counted retro to `lessons.md`. Promote: weekly `harness-improve` opens one proposal per lesson with count ≥ 3 or rule fired ≥ 3 times (unique events, probes excluded), proposing exactly one rule/hook/lint/test change: a PR, or one issue carrying the patch when the change touches `.claude/rules` or `.claude/hooks` (protected paths that CI cannot write, with no bypass). Prune: a monthly pass proposes deleting rules with zero firings in 30 days. Measure: the weekly metrics line, appended in promote mode. Only the owner merges.
 ## Rationale
 Evidence-gated promotion mirrors Anthropic's "bugs → CLAUDE.md" loop and OpenAI's garbage-collection agents while keeping the owner as the judge of every rule change.
 ## Accepted costs
-One weekly review of proposal PRs; events log grows (pruned monthly).
+One weekly review of proposals; the committed events log only grows (nothing prunes it); events from a ticket's last push reach it with the next ticket, because they are published before the merge approval.
 ## Outcome
-`.harness/events.jsonl`, `lessons.md`, `.github/workflows/harness-improve.yml`, `.harness/metrics.md`.
+`.harness/events.jsonl`, `scripts/publish-events.sh`, `lessons.md`, `.github/workflows/harness-improve.yml`, `.harness/metrics.md`.
 ```
 
 - [ ] **Step 2: Write the source stub**
@@ -2464,12 +2477,14 @@ git commit -m "docs: add ADRs D1-D9 and the Phase 0 source stub to the repo wiki
 
 ### Task 12: Global fixes and research hand-over (outside the repo)
 
-- [ ] **Step 1: Fix the global `harness-dev` skill state path**
+- [ ] **Step 1: Fix the global `harness-dev` skill state path** (done 2026-10-02)
 
-Run: `grep -n '\.claude/state' /Users/yu-sun00/.claude/skills/harness-dev/SKILL.md`
-Expected: two lines (`goal.md`, `progress.md`). Replace `.claude/state/` with `.harness/state/` in both (use `sed -i '' 's#\.claude/state/#.harness/state/#g' /Users/yu-sun00/.claude/skills/harness-dev/SKILL.md`), then re-run the grep and expect no output.
+The fix is backward compatible: older projects outside this repo still use `.claude/state/`, so the skill names `.harness/state/` first and keeps `.claude/state/` as the fallback.
 
-- [ ] **Step 2: Move the Korean research document to the owner's central wiki raw layer**
+Run: `grep -n 'state/' /Users/yu-sun00/.claude/skills/harness-dev/SKILL.md`
+Expected: two lines (`goal.md`, `progress.md`), each naming `.harness/state/` first and the older `.claude/state/` path in parentheses.
+
+- [ ] **Step 2: Move the Korean research document to the owner's central wiki raw layer** (done 2026-10-02)
 
 ```bash
 mv /Users/yu-sun00/Desktop/vera/docs/research/2026-09-30-ai-driven-development-methodology.md /Users/yu-sun00/Desktop/llm-wiki/raw/sessions/2026-09-30-vera-ai-driven-development-methodology-research.md
@@ -2478,23 +2493,27 @@ rmdir /Users/yu-sun00/Desktop/vera/docs/research
 
 Then, in a session opened in `/Users/yu-sun00/Desktop/llm-wiki`, run `/wiki-ingest` so the central wiki gets the decisions and the methodology findings (that wiki's skills, not this repo's).
 
-- [ ] **Step 3: Update Claude Code and audit the constitution**
+- [ ] **Step 3: Update Claude Code and audit the constitution** (owner step)
 
 Run: `claude update` then, in a new session in the repo, `/doctor`.
-Expected: version ≥ 2.1.277 (rules directory and AGENTS.md support per docs); `/doctor` proposes no cuts to `CLAUDE.md` that remove a rule backed by a gate — accept cuts only for content derivable from code.
+Expected: version ≥ 2.1.277 (rules directory and AGENTS.md support per docs; the installed 2.1.285 already meets it); `/doctor` proposes no cuts to `CLAUDE.md` that remove a rule backed by a gate — accept cuts only for content derivable from code.
 
 ---
 
 ### Task 13: Branch protection and Phase 0 acceptance run
 
-- [ ] **Step 1: Push and let CI register all checks**
+Order: Task 8 Step 5 (the owner installs the Claude GitHub App and sets the secret) → PR #4 → merge → Step 2 → Step 3. PR #4 opens before that setup; the setup must be done before the Step 3 acceptance run and before the first scheduled `harness-improve` run (Mon 2026-10-05 06:00 KST).
+
+- [ ] **Step 1: The owner approves; squash-merge PR #4**
+
+There is no direct push: the pre-push gate refuses `main`. Follow `/pull-request` from its checks step (checks green, events published, the owner's design review and explicit merge approval), then merge and look at `main`:
 
 ```bash
-git -C /Users/yu-sun00/Desktop/vera push origin main
-gh run list --repo BrokenFinger98/vera --limit 3
+gh pr merge 4 --repo BrokenFinger98/vera --squash
+gh run list --repo BrokenFinger98/vera --branch main --limit 3
 ```
 
-Expected: the `CI` run is green; `test-guard` and `claude-review` appear only on PRs (they are registered as checks after the first PR — see Step 3).
+Add `--delete-branch` to the merge when the branch is not checked out in a worktree. Expected: the `CI` run on `main` is green; `test-guard` and `claude-review` run only on PRs (they register as checks with the first PR run).
 
 - [ ] **Step 2: Branch protection on `main`**
 
@@ -2503,9 +2522,9 @@ gh api -X PUT repos/BrokenFinger98/vera/branches/main/protection \
   -H "Accept: application/vnd.github+json" \
   --input - <<'JSON'
 {
-  "required_status_checks": { "strict": true, "contexts": ["check (format, detekt, unit, arch)", "itest (Testcontainers PostgreSQL 18)", "coverage (Kover ≥ 80% lines)", "build (bootJar)", "label-required-when-tests-change"] },
+  "required_status_checks": { "strict": true, "contexts": ["check (format, detekt, unit, arch)", "itest (Testcontainers PostgreSQL 18)", "coverage (Kover ≥ 80% lines)", "build (bootJar)", "label-required-when-tests-change", "guards (constitution, fail-closed)"] },
   "enforce_admins": true,
-  "required_pull_request_reviews": { "required_approving_review_count": 1, "require_code_owner_reviews": true },
+  "required_pull_request_reviews": { "required_approving_review_count": 0, "require_code_owner_reviews": false },
   "restrictions": null,
   "required_linear_history": true,
   "allow_force_pushes": false,
@@ -2516,21 +2535,21 @@ JSON
 gh api -X PATCH repos/BrokenFinger98/vera -f allow_squash_merge=true -f allow_merge_commit=false -f allow_rebase_merge=false -f delete_branch_on_merge=true >/dev/null && echo "merge settings ok"
 ```
 
-Expected: JSON response with `required_status_checks` echoing the five contexts; `merge settings ok`. A solo owner approving their own PR: GitHub does not count self-approval, so set `required_approving_review_count` to `0` if merges block — record that in progress.md (the design review still happens; it is documented in the PR checklist).
+Expected: JSON response with `required_status_checks` echoing the six contexts (the four `ci.yml` jobs, the label job and the `guards` job of `test-guard.yml`; `claude-review` stays advisory); `merge settings ok`. A pull request is required, but no GitHub approval: agents open PRs from the owner's account, and GitHub never counts an author's approval, so a required approval could never be met. The owner's approval happens in the flow instead (the design review and the merge approval in `/pull-request`). Record this in progress.md. The other rules stay: `enforce_admins`, linear history, no force push, conversation resolution; the repository merges squash-only and deletes merged branches.
 
-- [ ] **Step 3: Acceptance run (spec §13) — a harness ticket through the whole loop**
+- [ ] **Step 3: Acceptance run (spec §13) — the first harness ticket through the whole loop**
 
-Use the flow itself to prove itself: `/ticket` → "harness: verify Phase 0 gates fire" (owned module `:bootstrap`, EARS = the §13 lines) → in the worktree make a trivial test-covered change (add `TableName.equals` behaviour test or similar) → let the Stop hook run → `/gated-commit` → push (guards + wiki gate) → `/finish-task` (retro → first `lessons.md` entry) → `/pull-request` → CI + claude-review → owner approves → squash merge.
+Use the flow itself to prove itself, on the first deferred harness-hardening ticket (owned area `harness`, not a metadata test): pick one item from the deferred list in `progress.md` (test-weakening detection, harness-owned paths, migration rename/delete, danger-hook false negatives and positives, guard fixtures and `test-hooks.sh` in CI). `/ticket` → implement it with its tests in the worktree → let the Stop hook run → `/gated-commit` → push (guards + wiki gate) → `/finish-task` (retro → first `lessons.md` entry) → `/pull-request` → CI + claude-review → owner approves → squash merge.
 
 Expected evidence, pasted into `progress.md`:
-- `.harness/events.jsonl` contains at least one `stop-gate` or `pre-push-guard` or `wiki-gate` event from this ticket (force one: push once without wiki changes and without the trailer, observe the block, then add the trailer).
+- `.harness/events.jsonl` holds a published `stop-gate`, `pre-push-guard`, `wiki-gate` and `ci` event from this ticket (force each once, observe the block, then fix it: a failing `check.sh` at Stop, a push the guards refuse, a push without wiki changes and without the trailer, a failing required check).
 - `lessons.md` has its first entry with `count: 1`.
 - PR shows `claude-review` verdict and all required checks green; merged with squash; branch deleted.
-- `gh workflow run harness-improve.yml -f mode=promote` completes with "promote: nothing due" in the log.
+- `gh workflow run harness-improve.yml -f mode=promote` completes, prints "promote: nothing due" and opens one `harness/promote-metrics-<yyyymmdd>` pull request with the week's metrics line (the owner merges or closes it).
 
 - [ ] **Step 4: Close Phase 0**
 
-Update `.harness/state/progress.md` Phase 0-B entry with the evidence, rewrite `goal.md` "Where we are" to "Phase 1 — metadata engine", commit via `/gated-commit` on a `docs/` branch, PR, merge.
+Phase 0 ends here: the first harness ticket has completed the loop and stop-gate, pre-push-guard, wiki-gate and ci events have each been published. Update `.harness/state/progress.md` Phase 0-B entry with the evidence and flip it to ✅, rewrite `goal.md` "Where we are" to "Phase 1 — metadata engine", commit via `/gated-commit` on a `docs/` branch, PR, merge. Phase 1 ticket 1 follows.
 
 ---
 
@@ -2539,11 +2558,11 @@ Update `.harness/state/progress.md` Phase 0-B entry with the evidence, rewrite `
 - §3 operating model → CLAUDE.md flow + skills (`ticket`, `start-task`, `finish-task`, `pull-request`) ✓
 - §4 layout → every harness path created (Tasks 1–11) ✓; `docs/specs/<module>.md` template only (modules get specs with their first ticket) ✓
 - §5 harness placement → global reused, GitHub-flow skills under distinct names (a personal skill outranks a same-name project skill), rules path-scoped, settings without `defaultMode`, `cd` rule ✓; global `harness-dev` path fix (Task 12) ✓
-- §6 gate stack → 0a format.sh + global secrets ✓ · 0b deny list + global block-danger ✓ · 1 stop-gate.sh ✓ · 2 guards.sh + wiki gate ✓ · 3 ci.yml (Plan A) + test-guard + claude-review ✓ · 4 branch protection ✓ · 5 PR checklist ✓; every failure message says what to change ✓
+- §6 gate stack → 0a format.sh + global secrets ✓ · 0b deny list + global block-danger ✓ · 1 stop-gate.sh ✓ · 2 guards.sh + wiki gate (hook, and the CI guards job) ✓ · 3 ci.yml (Plan A) + test-guard (label job, guards job) + claude-review (advisory) ✓ · 4 branch protection (PRs, six required checks, no GitHub approvals) ✓ · 5 PR checklist ✓; every failure message says what to change ✓
 - §7 tickets/DoD → issue template, PR template, size guard, ADR rule ✓
 - §9 D5/D8 → worktree include, blocked-by in template and `start-task`, three workflows ✓
 - §10 knowledge + §10.1 loop → wiki schema/skills, lessons.md format, events log, weekly/monthly routine, metrics ✓
 - §12 steps 1, 4, 5, 7 ✓ (step 7 is the acceptance run, Task 13)
-- §13 acceptance criteria → each mapped: inject-state (Task 3), format (Task 3), deny/block (Task 3 settings + global hook), stop-gate (Task 3), guards on push (Task 7), CI + protection (Plan A Task 12 + Task 13), events log (Task 3), retro (Task 5), routine PR (Task 8, dry run in Task 13), ready queue (Task 5 `start-task` blocker check) ✓
-- Placeholder scan: the only `<...>` tokens are inside templates meant to be filled per ticket, and `<200|404>`-style evidence slots filled by the run itself. No TODO/TBD.
-- Consistency: script names (`log-gate-event.sh`, `guards.sh`, `check.sh`), trailers (`Test-Change:`, `Wiki-Skip:`), labels (`test-change`, `task`, `harness`), event gate names (`stop-gate`, `pre-push-guard`, `wiki-gate`, `critic`, `ci`) match across hooks, skills, workflows and ADRs.
+- §13 acceptance criteria → each mapped: inject-state (Task 3), format (Task 3), deny/block (Task 3 settings + global hook), stop-gate (Task 3), guards on push (Task 7), CI + protection (Plan A Task 12 + Task 13), events log (Task 3: shared log and `publish-events.sh`), retro (Task 5), routine PR (Task 8, dry run in Task 13), ready queue (Task 5 `start-task` blocker check) ✓
+- Placeholder scan: the only `<...>` tokens are inside templates, skills and rules meant to be filled per ticket (`<n>`, `<type>`, `<slug>`, `<root>`, `<module>`). No TODO/TBD.
+- Consistency: script names (`log-gate-event.sh`, `publish-events.sh`, `guards.sh`, `check.sh`), trailers (`Test-Change:`, `Wiki-Skip:`), labels (`test-change`, `task`, `harness`), event gate names (`stop-gate`, `pre-push-guard`, `wiki-gate`, `critic`, `ci`) and the events location (the shared untracked log in the git common dir, published to `.harness/events.jsonl` by `/finish-task` and `/pull-request`) match across hooks, scripts, skills, workflows, the spec and ADR D9.

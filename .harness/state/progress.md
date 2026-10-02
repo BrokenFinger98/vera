@@ -17,10 +17,11 @@ Entries start with the date. Everything above the archive marker (the HTML comme
 
 ## [2026-10-02] Phase 0-B — harness, gates, wiki, self-improvement loop 🚧
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-b-harness.md`
-- Status: harness on PR #4 (this branch); acceptance run (Plan B Task 13) pending
-- CLAUDE.md (100 lines) · 5 rules · 8 skills · 4 hooks + the `log-gate-event.sh` writer · pre-push guards (9 checks + wiki gate; first firings logged: `.harness/events.jsonl` has 4 lines — stop-gate 1, block-danger 1, pre-push-guard 2 from the negative probe) · CI workflows: `ci.yml` only
-- Pending: GitHub templates and the `test-guard`, `claude-review` and `harness-improve` workflows (Task 8) · 3 saved fan-out workflows (Task 9)
-- ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
-- Next: Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md), after the acceptance run
+- Status: harness on PR #4 (this branch); the owner's GitHub App and secret, the merge, Task 13 protection and the acceptance run are pending
+- Exists: CLAUDE.md (102 lines) · 5 rules · 8 skills · 4 hooks + the `log-gate-event.sh` writer and `scripts/publish-events.sh` · pre-push guards (9 checks + wiki gate), hardened after the critic and final reviews · CI workflows: `ci.yml`, `test-guard.yml` (the `test-change` label job and the `guards` job, which runs the base commit's `guards.sh`), `claude-review.yml`, `harness-improve.yml` · 3 saved fan-out workflows · ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
+- Events: gate firings go to the shared untracked log in the git common dir and are published to `.harness/events.jsonl`; 4 probe lines (`"probe":true`: stop-gate 1, block-danger 1, pre-push-guard 2 from the negative probe) are published so far
+- Pending: the owner installs the Claude GitHub App and sets `CLAUDE_CODE_OAUTH_TOKEN` (before the acceptance run and before the first scheduled `harness-improve` run, Mon 2026-10-05 06:00 KST) · squash-merge PR #4 · Task 13 branch protection · the acceptance run, which is the first deferred harness-hardening ticket through the whole loop (owned area `harness`)
+- Deferred hardening tickets: test-weakening detection · harness-owned paths · migration rename/delete · danger-hook false negatives and positives · guard fixtures and `test-hooks.sh` in CI
+- Next: Phase 0 ends when that first harness ticket completes the loop and stop-gate, pre-push-guard, wiki-gate and ci events have each been published; Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md) follows
 
 <!-- ARCHIVE -->

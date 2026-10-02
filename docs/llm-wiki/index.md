@@ -14,7 +14,7 @@ Read this first. Every page is registered here; entries start with a date so mer
 - 2026-09-30 [[decisions/2026-09-30-human-approved-self-improvement-loop]] — D9: events → counted lessons → weekly proposal PRs → monthly prune PRs, owner merges
 
 ## Concepts
-- 2026-09-30 [[concepts/lessons]] — counted lessons feeding the self-improvement loop (open / promoted / dropped)
+- 2026-09-30 [[concepts/lessons]] — counted lessons feeding the self-improvement loop (open / proposed / promoted / dropped)
 
 ## Sources
 - 2026-09-30 [[sources/2026-09-30-phase0-design-and-research]] — origin chat + 2026-09 methodology research → spec + D1–D9

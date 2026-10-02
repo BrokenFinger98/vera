@@ -7,7 +7,7 @@ immutable decision in `CLAUDE.md`**. Style is owned by ktfmt and detekt — neve
 
 - **blocking** — wrong behaviour, data loss, security hole, module-boundary violation, test weakened/deleted
   without a `Test-Change:` trailer and explanation, migration edited, immutable decision contradicted,
-  PR > 400 lines without split rationale.
+  PR > 400 lines (`.harness/events.jsonl` excluded) without split rationale.
 - **major** — requirement from the ticket's acceptance criteria not covered by a test; missing rollback note.
 - **minor** — naming that contradicts `docs/domain/glossary.md`; missing ADR for an evident decision;
   domain identifier or name not wrapped in a `value class`; `if … else` where an early return works.

@@ -8,6 +8,7 @@ description: Load a GitHub issue into the session (body, acceptance criteria, ow
 1. `gh issue view <n> --json title,body,labels,milestone` — read Goal, Context, EARS criteria, Non-goals, Verify, Blocked-by.
    If **Blocked by** names an open issue → stop and report; the ready queue excludes it.
 2. Confirm you are on `<type>/<n>-<slug>` and, when parallel, in your own worktree.
+   If the branch does not exist yet (an owner-filed or harness-improve issue), create it as in /ticket step 5.
 3. Re-read `.harness/state/goal.md`, `progress.md` (above the marker), and any ADR the ticket links.
 4. Explore the owned module only: existing tests first, then code. Use a subagent for anything wider.
    Before creating files, Read the `.claude/rules/*.md` whose `paths` match them — rules load when a matching file is read, not when one is written.

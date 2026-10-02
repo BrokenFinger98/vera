@@ -21,4 +21,4 @@ Same rule as the owner's programmers-tracker repo; consistent with the "docs are
 ## Accepted costs
 Reading friction for the owner; Korean research notes live in the owner's central wiki instead of this repo. Guard: `scripts/guards.sh` check 6.
 ## Outcome
-`.gitignore` excludes `docs/research/`; pre-push guard rejects Hangul outside `README.ko.md`.
+`.gitignore` excludes `docs/research/`; the pre-push guard rejects newly added Hangul (added lines and commit messages) outside `README.ko.md`; the CI `guards` job runs the same script.

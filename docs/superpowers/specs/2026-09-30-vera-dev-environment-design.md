@@ -1,15 +1,16 @@
 # Vera — Development Environment & Methodology Design (Phase 0)
 
 > Status: **Approved (2026-09-30).** D1–D7 confirmed in the decision interview; D8 (no graph runtime) and D9 (self-improvement loop) confirmed in follow-up review the same day. Next: implementation plan via writing-plans.
-> Research and evidence: `docs/research/2026-09-30-ai-driven-development-methodology.md` (Korean; to be moved to the
-> central wiki before the first commit — this repository ships English artifacts only).
-> Origin: the design chat that defined Vera — https://claude.ai/share/d6bca3d8-b6a6-4622-a173-21a9ceac03b4
+> Research and evidence: the Korean methodology research (moved to the owner's central wiki, raw/sessions, on
+> 2026-10-02; this repository ships English artifacts only).
+> Origin: the origin design chat (2026-09-30) that defined Vera.
 
 ## 1. Goal
 
 Set up the repository, toolchain, and working process so that **Claude Code writes 100% of Vera's code** while the owner acts only as
-product owner, architect, and reviewer. Phase 0 ends when a first real ticket (metadata engine: table/field definitions + DDL-transactional
-table creation) can be executed end to end through the process below, with every gate firing at least once.
+product owner, architect, and reviewer. Phase 0 ends when the first harness ticket (a deferred hardening item, owned area `harness`)
+completes the loop below and stop-gate, pre-push-guard, wiki-gate and ci events have each been published; Phase 1 ticket 1
+(metadata engine: table/field definitions + DDL-transactional table creation) follows.
 
 Vera itself: a metadata-driven enterprise platform engine (ServiceNow-style) — metadata engine, rule engine, layering/upgrade engine,
 later multi-instance provisioning — with ITAM as the first domain app. The platform design (engines, storage strategy, roadmap phases 1–5)
@@ -39,7 +40,7 @@ approve spec                             →   /writing-plans → tasks → GitH
 approve & prioritise tickets             →   per ticket, in a worktree: Explore → Plan → Implement → Verify
                                              (architect designs · worker implements · tester produces evidence · critic attacks)
 review PR for design only                ←   PR with Evidence (command output, `git diff --stat`, reviewer/critic findings)
-approve merge                            →   squash merge · progress.md updated · /wiki-ingest
+approve merge                            →   squash merge (progress.md and the wiki were already updated in the branch)
 ```
 
 - One session = one ticket. Large features: "interview me → SPEC.md → fresh session".
@@ -59,7 +60,7 @@ vera/
 ├── platform/{metadata,query,rule,layering}/   # Spring Modulith modules (origin-chat structure)
 ├── apps/itam/  ingestion/  bootstrap/          # control-plane and apps/rack are later phases
 ├── compose.yml                   # human demo stack (PG 18, Valkey, Kafka, Keycloak). Tests never use it
-├── scripts/{check,test,itest,build,guards}.sh  # agent entry points; each prints a final status line and exits non-zero on failure
+├── scripts/{check,test,itest,build,guards,publish-events,test-hooks}.sh  # agent entry points; each prints a final status line and exits non-zero on failure
 ├── docs/
 │   ├── superpowers/{specs,plans}/ # brainstorming / writing-plans outputs (existing convention)
 │   ├── specs/<module>.md          # living spec per platform module: behaviour, invariants, API contract (spec-anchored; trial)
@@ -69,17 +70,17 @@ vera/
 │       └── wiki/concepts/lessons.md   # counted lessons feeding the self-improvement loop (§10.1)
 ├── .harness/
 │   ├── state/{goal.md (gitignored, personal), progress.md (committed)}
-│   ├── events.jsonl               # append-only gate-firing log (committed; pruned monthly)
+│   ├── events.jsonl               # gate-firing log: published copy of the shared untracked log (append-only, committed, grows; never pruned)
 │   └── metrics.md                 # weekly harness metrics (§10.1)
 ├── .claude/
 │   ├── settings.json              # allow/deny/hooks ONLY — never defaultMode (ignored in project files, degrades session to manual)
-│   ├── hooks/{inject-state,stop-gate,format,log-gate-event}.sh
+│   ├── hooks/{inject-state,stop-gate,format,log-gate-event,block-project-danger}.sh
 │   ├── rules/{domain,persistence,web,test,migration}.md   # path-scoped via `paths:` frontmatter
 │   ├── skills/{ticket,gated-commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/
 │   ├── agents/                    # empty: the seven global agents are reused; project-specific overrides only by same filename
-│   └── workflows/{audit-consistency,release-review,deep-research}.md   # the only three saved fan-out Workflows (§9)
-├── .githooks/pre-push             # guards.sh (fail-closed) + wiki gate (fail-open, `Wiki-Skip:` trailer); both log to events.jsonl
-├── .worktreeinclude               # .env.local
+│   └── workflows/{audit-consistency,release-review,deep-research}.js   # the only three saved fan-out Workflows (§9)
+├── .githooks/pre-push             # guards.sh (fail-closed) + wiki gate (fail-open, `Wiki-Skip:` trailer); both log to the shared event log
+├── .worktreeinclude               # .env.local, .harness/state/goal.md
 └── .github/{CODEOWNERS, PULL_REQUEST_TEMPLATE.md, ISSUE_TEMPLATE/task.yml,
             workflows/{ci,test-guard,claude-review,harness-improve}.yml}   # harness-improve = weekly/monthly routine (§10.1)
 ```
@@ -93,7 +94,7 @@ a `decisions.md` state file (ADRs in the wiki are the single authority, as in pr
 |---|---|---|
 | Skills | harness-dev / harness-review / harness-rca, superpowers plugin | `ticket`, `gated-commit`, `pull-request` (GitHub flow; **distinct names, because a personal skill outranks a same-name project skill** — enterprise > personal > project — so a project `issue` or `commit` would be shadowed by the global GitLab skills), `start-task`, `finish-task`, `wiki-*` (repo wiki target; a skill also outranks a same-name file in `~/.claude/commands/`) |
 | Agents | architect, critic, tester, reviewer, evidence-reviewer, scout, worker | none initially |
-| Hooks | `block-danger.sh` (dangerous commands + Evidence Gate), `post-edit-check.sh` (secrets), wiki archive hooks | `inject-state.sh` (SessionStart: goal + progress above marker + wiki index; idempotent `core.hooksPath`), `stop-gate.sh` (Stop: `scripts/check.sh` when `src/` is dirty), `format.sh` (PostToolUse Edit/Write on `.kt`: `spotlessApply` for the touched file) |
+| Hooks | `block-danger.sh` (dangerous commands + Evidence Gate), `post-edit-check.sh` (secrets), wiki archive hooks | `inject-state.sh` (SessionStart: goal + progress above marker + wiki index; idempotent `core.hooksPath`), `stop-gate.sh` (Stop: `scripts/check.sh` when `src/` is dirty), `format.sh` (PostToolUse Edit/Write on `.kt`: `spotlessApply` for the touched file), `block-project-danger.sh` (PreToolUse Bash: Vera-specific destructive commands and hook bypasses), `log-gate-event.sh` (the one writer of the shared gate-event log) |
 | Rules | — | `.claude/rules/*.md` with `paths:` — enforceable summaries of ADRs (MUST / MUST NOT / verify command) |
 | Settings | `defaultMode: bypassPermissions`, `model: fable` | allow list for `./gradlew`, `./scripts/*.sh`, read-only git; deny for `.env*` reads; hooks. Because a `Read()` deny rule makes `cd X && <relative read>` prompt even in bypass mode, CLAUDE.md forbids `cd` in Bash (absolute paths, `git -C`) |
 
@@ -108,10 +109,10 @@ auto-apply all still hold. Only the GitLab workflow (`/issue → /merge-request`
 |---|---|---|---|---|
 | 0a | on edit | global `post-edit-check.sh` (secrets) + project `format.sh` | secrets: yes (exit 2) | adopt |
 | 0b | on Bash | global `block-danger.sh` + project patterns (`flywayClean`, `compose down -v`, `DROP SCHEMA`, `git checkout -- .`) | yes | adopt |
-| 1 | on Stop | `stop-gate.sh` → `scripts/check.sh` = spotlessCheck + detekt + unit tests + archTest, target < 60 s. Guards against `stop_hook_active` loops. Known false failure when a worker's Gradle runs concurrently (lead re-runs after worker idles) | yes | **trial (D7)** |
-| 2 | on push | `.githooks/pre-push`: `guards.sh` fail-closed — deleted test files, net assertion decrease without `Test-Change:` trailer, new suppressions in any source set (`@Suppress`, `@file:Suppress`, `@SuppressWarnings`, `@[Suppress(...)]`), detekt baseline file, detekt configured outside the root `build.gradle.kts`, non-English committed text in gated paths, secrets; then wiki gate fail-open (`Wiki-Skip: <reason>`); global Evidence Gate | yes | adopt |
-| 3 | CI (PR) | `ci.yml`: build · unit · itest (Testcontainers PG 18 / Kafka / Valkey) · `verifyArch` (Modulith `verify()` + ArchUnit) · spotless/detekt · Kover thresholds per module · `test-guard.yml` (label `test-change` required when `src/test` changes) · `claude-review.yml` (claude-code-action, once per PR open, `REVIEW.md`) | required checks | adopt |
-| 4 | merge | branch protection on `main`: PR required, checks above required, linear history, no force push, enforce for admins, squash only, auto-delete branch | yes | adopt |
+| 1 | on Stop | `stop-gate.sh` → `scripts/check.sh` = spotlessCheck + detekt + unit tests + archTest, target < 60 s. Guards against `stop_hook_active` loops. Skips (and logs it) while a Gradle build of the same checkout runs, a worker's for instance; the lead re-runs `check.sh` after the worker idles | yes | **trial (D7)** |
+| 2 | on push | `.githooks/pre-push`: refuses pushes to `main`; then `guards.sh` fail-closed over what the branch adds since its merge-base with `main` — deleted test files and net assertion decrease without a `Test-Change: <reason>` trailer, new suppressions in any source set (`@Suppress`, `@file:Suppress`, `@SuppressWarnings`, `@[Suppress(...)]`), detekt baseline file, edited merged Flyway migration, newly added Hangul (added lines and commit messages, anywhere except `README.ko.md`), secrets, new production `.kt` without a test change, detekt configured outside the root `build.gradle.kts`; then the wiki gate, fail-open (a change under `docs/llm-wiki/wiki/` other than `concepts/lessons.md`, or a `Wiki-Skip: <reason>` trailer; enforced when the range touches code, harness, CI, `REVIEW.md`, detekt config or the root build); the global Evidence Gate is inert without `docs/evidence-gate.md` | yes | adopt |
+| 3 | CI (PR) | `ci.yml`: build · unit · itest (Testcontainers PG 18 / Kafka / Valkey) · `verifyArch` (Modulith `verify()` + ArchUnit) · spotless/detekt · Kover thresholds per module · `test-guard.yml` (label `test-change` required when `src/test` changes, and the `guards` job, which runs the base commit's `scripts/guards.sh` over the PR range) · `claude-review.yml` (claude-code-action, once per PR open or ready-for-review, `REVIEW.md`; advisory, not a required check) | required checks | adopt |
+| 4 | merge | branch protection on `main`: PR required but no GitHub approval count (agents open PRs from the owner's account, and GitHub never counts an author's approval; the owner's approval is the design review and the merge in the flow), the checks above required except the advisory `claude-review`, linear history, no force push, enforce for admins, conversation resolution, squash only, auto-delete branch | yes | adopt |
 | 5 | human | five-item design review (§3) | yes | adopt |
 
 Every guard's failure output states **what to change and how** — the message is an instruction to the agent, not just a verdict.
@@ -162,7 +163,7 @@ Every guard's failure output states **what to change and how** — the message i
 - **Exactly three saved Workflows** (`.claude/workflows/`), used only for fan-out that a single session cannot do well:
   `audit-consistency` (every endpoint checked for ACL injection and metadata consistency, then adversarially verified), `release-review` (per-file reviewers, findings ranked and merged before a release tag),
   `deep-research` (design-decision research). Never for day-to-day feature tickets; ultracode is never left on.
-- `.worktreeinclude` carries `.env.local`; `GRADLE_USER_HOME` shared across worktrees.
+- `.worktreeinclude` carries `.env.local` and `.harness/state/goal.md`; `GRADLE_USER_HOME` shared across worktrees.
 - Flyway migration versions are timestamps to avoid numbering collisions between worktrees.
 - `/loop` and `/goal` only for tickets whose success is fully defined by tests (coverage top-ups, lint clean-ups, migrations), with
   iteration and cost caps and a dedicated branch. Workflows/ultracode only for research and multi-perspective review.
@@ -171,7 +172,7 @@ Every guard's failure output states **what to change and how** — the message i
 ## 10. Knowledge (repo wiki + central wiki)
 
 - Repo-local `docs/llm-wiki/` following the owner's schema; `raw/inbox/` gitignored so the global SessionEnd/PreCompact hooks archive there.
-  `/wiki-ingest` after each merged PR that made a decision; the pre-push wiki gate enforces it (escape: `Wiki-Skip:` trailer).
+  `/wiki-ingest` runs in the ticket's branch, before the PR, whenever the ticket made a decision (`/finish-task` step 5); the pre-push wiki gate enforces it (escape: `Wiki-Skip: <reason>` trailer).
 - Lessons that recur three times become a hook, test, or rule and are removed from prose.
 - Cross-project knowledge (Boot 4 traps, GraalVM sandbox, permission modes) stays in the owner's central wiki; the repo links, never copies.
 
@@ -181,14 +182,14 @@ The loop closes only if capture is automatic, promotion is proposed by a machine
 
 | Stage | Mechanism | Automatic? |
 |---|---|---|
-| **Capture** | `log-gate-event.sh` appends one JSON line to `.harness/events.jsonl` whenever a gate fires: `block-danger` block, Stop-gate block (with failing task), pre-push guard/wiki-gate block, critic `Blocking` finding, CI failure class (parsed from the PR check). Fields: `ts, gate, rule, ticket, branch, detail` | yes (hooks, git hook, CI step) |
+| **Capture** | `log-gate-event.sh` appends one JSON line to the shared, untracked gate-event log in the git common dir (`<git common dir>/vera-events.jsonl`: one file for the main checkout and every worktree, so a firing never dirties a tree) whenever a gate fires: `block-danger` block, Stop-gate block or skip (with failing task), pre-push guard/wiki-gate block, critic `Blocking` finding and CI failure (both logged by the agent, in `/finish-task` and `/pull-request`; CI does not parse its own checks). `scripts/publish-events.sh`, run by `/finish-task` and `/pull-request`, copies new lines into the committed `.harness/events.jsonl`; events from a ticket's last push reach it with the next ticket. Fields: `ts, gate, rule, ticket, branch, detail` (`$HOME` appears as `<home>`, secret-like assignments are masked; deliberate gate tests carry `"probe": true`) | yes for hooks and git hooks; semi for critic and ci events (logged by the agent) |
 | **Distill** | `finish-task` skill ends every PR with a three-question retro appended to `docs/llm-wiki/wiki/concepts/lessons.md`: what was slow, what the agent got wrong, which rule was missing. Each lesson carries a `count:` that increments when the same lesson recurs. `/wiki-ingest` (enforced by the push gate) turns decisions into ADRs | semi (skill-driven, runs in the PR session) |
-| **Promote** | `harness-improve.yml` weekly: reads `events.jsonl` and `lessons.md`; for any lesson with `count ≥ 3` or any gate rule that fired ≥ 3 times for the same cause, opens **one PR** proposing exactly one of: a CLAUDE.md line, a `.claude/rules/*.md` file, a detekt/ArchUnit rule, a `guards.sh` or `block-danger` pattern, a test. The PR body cites the events. The lesson is marked `promoted:` and leaves prose | proposal yes, merge **owner only** |
-| **Prune** | same routine, monthly: rules/hooks/CLAUDE.md lines with zero firings in `events.jsonl` for 30 days, plus `/doctor` prompt-audit findings, become a deletion PR (D7 is the first instance) | proposal yes, merge **owner only** |
-| **Measure** | weekly line in `.harness/metrics.md`: merged PRs, tokens per merged PR (from session summaries), critic Blocking per PR, gate firings by rule, CI failure rate, regressions (bugs on merged tickets), time-to-green | yes |
+| **Promote** | `harness-improve.yml` weekly: reads `events.jsonl` (unique lines only, `"probe": true` lines skipped) and `lessons.md`; for any lesson with `count ≥ 3` or any gate rule that fired ≥ 3 times for the same cause, opens **one proposal** proposing exactly one of: a CLAUDE.md line, a `.claude/rules/*.md` file, a detekt/ArchUnit rule, a `guards.sh` or `block-danger` pattern, a test. It is a PR, except that `.claude/rules` and `.claude/hooks` are protected paths (CI cannot write there, and nothing bypasses that), so such a proposal is one issue carrying the exact patch for a local ticket. The body cites the events. The lesson is marked `status: proposed` with the link, becomes `promoted` once merged and leaves prose | proposal yes, merge **owner only** |
+| **Prune** | same routine, monthly (prune mode): rules/hooks/CLAUDE.md lines with zero firings in `events.jsonl` for 30 days, plus the `/wiki-lint` checks and a CLAUDE.md check for content derivable from code, become one deletion PR (one issue for items under `.claude/`) (D7 is the first instance) | proposal yes, merge **owner only** |
+| **Measure** | weekly line in `.harness/metrics.md`, appended by the routine in promote mode (in its first promote PR, or in its own PR when nothing else is due): merged PRs, average changed lines per PR, gate firings by rule (probes excluded), critic Blocking per PR, CI failure rate, regressions (bugs on merged tickets), time-to-green | yes |
 
 Rules of the loop: a lesson never becomes a rule without three occurrences or one incident; a rule never survives 30 days without a firing unless the owner marks it `keep:` with a reason; Claude Code auto memory is personal and does not count as a repo rule until promoted through this PR path.
-The monthly `/wiki-lint` + `/doctor` + dependency review runs inside the same routine.
+The monthly prune pass runs the `/wiki-lint` checks and a CLAUDE.md derivability check inside the same routine.
 
 ## 11. Toolchain versions and Phase 0 proofs of concept
 
@@ -216,8 +217,10 @@ PoCs, each ≤ half a day, results recorded as ADRs:
    Hooks include `log-gate-event.sh`; `finish-task` includes the retro; `harness-improve.yml` is created with the weekly/monthly schedule.
 5. `.harness/state/goal.md` (Phase 1 goal), `progress.md` (Phase 0 record), empty `events.jsonl` and `metrics.md`, `lessons.md` with the schema header; move the Korean research doc to the central wiki; write ADRs for D1–D9.
 6. Run the four PoCs; record outcomes as ADRs; adjust versions if a PoC fails.
-7. First real ticket through the full loop: "metadata engine — `TableDefinition`/`FieldDefinition` system tables + create-table API with transactional DDL".
-   Its PR must produce the first `events.jsonl` entries, the first `lessons.md` retro, and the first metrics line.
+7. First ticket through the full loop: the first deferred harness-hardening ticket (owned area `harness`; for example test-weakening detection, harness-owned paths,
+   migration rename/delete, danger-hook false negatives and positives, guard fixtures and `test-hooks.sh` in CI). Its PR must publish stop-gate, pre-push-guard,
+   wiki-gate and ci events, the first `lessons.md` retro and the first non-probe metrics line. Phase 1 ticket 1 follows: "metadata engine —
+   `TableDefinition`/`FieldDefinition` system tables + create-table API with transactional DDL".
 
 ## 13. Acceptance criteria for Phase 0
 
@@ -226,11 +229,12 @@ PoCs, each ≤ half a day, results recorded as ADRs:
 - WHEN an agent tries `git push --force`, `flywayClean`, `compose down -v` or `DROP SCHEMA` THE SYSTEM SHALL block the command with a corrective message.
 - WHEN a session stops with uncommitted `src/` changes and `scripts/check.sh` fails THE SYSTEM SHALL refuse to stop and show the failing output.
 - WHEN a push deletes a test file or reduces assertions without a `Test-Change:` trailer THE SYSTEM SHALL reject the push.
-- WHEN a PR is opened THE SYSTEM SHALL run build, unit, itest, verifyArch, lint, coverage, test-guard and claude-review, and `main` SHALL refuse merge until all pass.
-- WHEN the first metadata-engine ticket is executed THE SYSTEM SHALL produce a merged PR whose Evidence section satisfies all nine DoD items.
-- WHEN any gate blocks an action THE SYSTEM SHALL append one line to `.harness/events.jsonl` naming the gate, the rule and the ticket.
+- WHEN a PR is opened THE SYSTEM SHALL run build, unit, itest, verifyArch, lint, coverage, test-guard, guards and claude-review, and `main` SHALL refuse merge until every required check (all but the advisory claude-review) passes.
+- WHEN the first harness ticket is executed THE SYSTEM SHALL produce a merged PR whose Evidence section satisfies all nine DoD items.
+- WHEN any gate blocks an action THE SYSTEM SHALL append one line to the shared gate-event log naming the gate, the rule and the ticket.
+- WHEN `/finish-task` or `/pull-request` runs THE SYSTEM SHALL copy the shared log's new lines into `.harness/events.jsonl`.
 - WHEN a PR is finished with `finish-task` THE SYSTEM SHALL append a counted retro entry to `lessons.md`.
-- WHEN the weekly routine runs and a lesson or gate rule has reached three occurrences THE SYSTEM SHALL open exactly one proposal PR citing the events, and SHALL NOT merge it.
+- WHEN the weekly routine runs and a lesson or gate rule has reached three occurrences THE SYSTEM SHALL open exactly one proposal (a PR, or an issue for `.claude/rules|hooks`) citing the events, and SHALL NOT merge it.
 - WHEN a ticket is blocked by an open ticket THE SYSTEM SHALL keep it out of the ready queue until the blocker is closed.
 
 ## 14. Out of scope for Phase 0
@@ -242,7 +246,8 @@ cross-module misses justify a two-week pilot; harness evals (replaying canonical
 
 ## 15. Risks and accepted costs
 
-- **Stop-hook false failures** during parallel Gradle runs — accepted; documented in CLAUDE.md, lead re-runs after workers idle.
+- **Stop-hook skips** while a Gradle build of the same checkout runs (a worker subagent's, say) — accepted; documented in CLAUDE.md, the lead re-runs `check.sh` after workers idle; other worktrees build into their own `build/`.
+- **The committed event log only grows** — nothing prunes `.harness/events.jsonl`; accepted (one short JSON line per gate firing, and the routine reads only the last 30 days).
 - **Boot 4.1 / Kotlin 2.3 / jOOQ 3.21 / Testcontainers 2 are all recent majors** — PoCs 1–4 exist to surface incompatibilities before Phase 1.
 - **English-only artifacts cost the owner time** when reading — accepted for portfolio value; `README.ko.md` and the central Korean wiki compensate.
 - **Gate count is high for a solo project** — each gate is tied to a documented failure mode from the 2026 evidence; the one-month audit (D7) removes gates that never fire.

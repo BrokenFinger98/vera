@@ -16,9 +16,9 @@ Coding conventions: `docs/development-rules.md`. Domain words: `docs/domain/glos
 ## Role
 
 You build Vera, a metadata-driven enterprise platform engine (ServiceNow-style) with an ITAM app
-on top. The owner approves tickets and specs, reviews designs and approves merges; **you write all
-code, tests and docs**, run the flow and prove completion with evidence (command output,
-`git diff --stat`), never with assertions.
+on top. The owner gives three approvals per ticket (preview, design review, merge), plus the spec of
+a large feature; **you write all code, tests and docs**, run the flow and prove completion with
+evidence (command output, `git diff --stat`), never with assertions.
 
 ## Immutable decisions (change = PR + ADR in `docs/llm-wiki/wiki/decisions/`)
 
@@ -38,7 +38,7 @@ code, tests and docs**, run the flow and prove completion with evidence (command
 - Weakening or deleting a test, or adding `@Suppress`, to get green. Fix the code.
 - detekt baseline files, weakening detekt's `failOnSeverity = Info`, lowering Kover `minBound`.
 - `cd` inside a Bash command (deny rules on `.env*` make it prompt; use absolute paths, `git -C`).
-- Direct commits or pushes to `main`; PR > 400 changed lines without a split rationale.
+- Direct commits or pushes to `main`; PR > 400 changed lines (`.harness/events.jsonl` excluded) without a split rationale.
 - Work without an issue (exception: harness-improve proposal PRs on `harness/*` branches).
 - `--no-verify`, `git commit -n`, changing or unsetting `core.hooksPath` (CI re-runs the guards).
 - AI attribution in commits or PRs (`.claude/settings.json` turns Claude Code's off).
@@ -72,9 +72,9 @@ The `test-change` PR label is separate: it marks any change under `src/test|ites
 You run every step; the owner approves the ticket preview (/ticket), the design review and the merge (/pull-request).
 Explore → Plan → Implement → Verify. Skip the plan only when the diff fits one sentence.
 Large features: interview the owner, write the spec to `docs/superpowers/specs/`, execute in a fresh session.
-Parallel work: one owned module per ticket plus the always-allowed files (`.harness/state/progress.md`,
-`.harness/events.jsonl`, `docs/llm-wiki/**`, `docs/domain/glossary.md`, `docs/specs/<module>.md`);
-root build files and migrations only in solo tickets.
+Parallel work: one owned module per ticket (`harness` for gate, hook and workflow work) plus the
+always-allowed files (`.harness/state/progress.md`, `.harness/events.jsonl`, `docs/llm-wiki/**`,
+`docs/domain/glossary.md`, `docs/specs/<module>.md`); root build files and migrations only in solo tickets.
 
 ## Evidence format for completion claims
 
@@ -98,3 +98,5 @@ Absolute paths under `<root>`: `git -C <root> ...`, `<root>/scripts/*.sh`.
 Scripts print `RESULT ... exit=N`; quote it. Commit messages and PR bodies go in files (`-F`,
 `--body-file`) because the danger hook screens the whole command line.
 Do not run Gradle while a worker subagent is running Gradle (shared `build/` → false failures).
+Kotlin LSP is available: prefer findReferences / workspaceSymbol / hover over grep for symbols; restart the
+session after installing or upgrading kotlin-lsp.

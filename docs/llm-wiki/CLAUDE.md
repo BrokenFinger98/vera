@@ -28,11 +28,11 @@ docs/llm-wiki/
 ## lessons.md format (feeds the self-improvement loop)
 ```
 ### <lesson slug>
-count: <n> · tickets: #12, #15 · first: 2026-10-02 · last: 2026-10-09 · status: open|promoted|dropped
+count: <n> · tickets: #12, #15 · first: 2026-10-02 · last: 2026-10-09 · status: open|proposed|promoted|dropped
 what: <one line: what was slow / wrong / missing>
 fix: <what a rule, hook, test or lint would look like>
 ```
-`count` ≥ 3 → the weekly routine proposes a promotion PR; on merge the entry becomes `status: promoted` and moves to the bottom.
+`count` ≥ 3 → the weekly routine proposes a promotion (a PR, or an issue for `.claude/rules|hooks`) and marks the entry `status: proposed` with the link; once the owner merges it, the entry becomes `status: promoted` and moves to the bottom.
 
 ## Workflows
 - **ingest** — `/wiki-ingest`: read index → save raw → source stub → integrate into pages (merge, never overwrite) → index + links → log line.

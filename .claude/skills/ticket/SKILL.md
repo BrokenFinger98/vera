@@ -15,7 +15,8 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 3. Show the preview; the owner approves it (Yes / Edit / Cancel). Create nothing before a Yes.
 4. `gh issue create --title "<Type> title" --label task --label <type> --milestone phase-<n> --body-file <tmp>`
 5. `git -C <root> fetch origin main && git -C <root> switch -c <type>/<n>-<slug> origin/main`
-   (with Orca, run `orca worktree create --name <type>/<n>-<slug> --base-branch origin/main --issue <n>` instead: one ticket = one worktree.)
+   With Orca instead: `orca worktree create --name <type>/<n>-<slug> --base-branch origin/main --issue <n> --agent claude --prompt "/start-task <n>"` (one ticket = one worktree).
+   Check with `orca worktree show --worktree issue:<n>` that the branch is exactly `<type>/<n>-<slug>`; the new worktree's agent continues with /start-task and this session's part ends.
 
 ## Task template (issue body)
 ```
@@ -25,7 +26,7 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 ## Context
 - Spec: docs/superpowers/specs/<file>#<section> (or "none")
 - ADR: <link or "may need one">
-- Owned module: <Modulith module, e.g. metadata> (Gradle project `:platform:metadata`) — plus the always-allowed files in CLAUDE.md
+- Owned module: <Modulith module, e.g. metadata> (Gradle project `:platform:metadata`) — or `harness` for gate/hook/workflow work — plus the always-allowed files in CLAUDE.md
 - Blocked by: #<n> (or "none")   Blocks: #<n> (or "none")
 
 ## Acceptance criteria (EARS)
@@ -47,4 +48,4 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 ```
 
 ## Labels
-`task` always; type label; `harness` for gate/hook work; milestone `phase-<n>`.
+`task` always; type label; `harness` for gate/hook/workflow work; milestone `phase-<n>`.

@@ -10,7 +10,7 @@ sources: []
 # Lessons (counted)
 
 Format and promotion rule: see `docs/llm-wiki/CLAUDE.md` → "lessons.md format". Entries are added by `/finish-task`.
-`count ≥ 3` → the weekly `harness-improve` routine opens a proposal PR. Promoted or dropped entries move below the line.
+`count ≥ 3` → the weekly `harness-improve` routine opens a proposal (a PR, or an issue for `.claude/rules|hooks`) and marks the entry `proposed`. Promoted or dropped entries move below the line.
 
 ## Open
 
