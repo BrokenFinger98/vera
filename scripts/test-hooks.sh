@@ -145,7 +145,7 @@ commit_in "$P" "feat: a suppression behind -diff"
 guards_last | grep 'new suppression' >/dev/null && ok "guards: '*.kt -diff' hides no added line" || bad "guards: '*.kt -diff' hides no added line"
 mkdir -p "$P/m/src/test/kotlin" && printf 'class T { fun t() = assertThat(1) }\n' > "$P/m/src/test/kotlin/T.kt" && commit_in "$P" "test: add T"
 git -C "$P" rm -q m/src/test/kotlin/T.kt && commit_in "$P" $'test: drop T\n\nTest-Change:'
-guards_last | grep 'test files deleted' >/dev/null && ok "guards: 'Test-Change:' without a reason excuses nothing" || bad "guards: 'Test-Change:' without a reason excuses nothing"
+guards_last | grep 'deleted-test-file in ' >/dev/null && ok "guards: 'Test-Change:' without a reason excuses nothing" || bad "guards: 'Test-Change:' without a reason excuses nothing"
 git -C "$P" commit -q --amend -m $'test: drop T\n\nTest-Change: obsolete probe'
 "$P/scripts/guards.sh" HEAD~1 HEAD >/dev/null 2>&1 && ok "guards: 'Test-Change: <reason>' accepts the deletion" || bad "guards: 'Test-Change: <reason>' accepts the deletion"
 printf 'k = "%s"\n' "sk-ant-$(printf 'x%.0s' $(seq 24))" > "$P/k1.txt" && commit_in "$P" "chore: k1"
@@ -181,5 +181,62 @@ git -C "$P" worktree add -q "$T/pwt" -b wt-guards && printf '@Suppress("Y")\ncla
 git -C "$T/pwt" push -q "$T/remote.git" HEAD:refs/heads/wt-guards >/dev/null 2>&1
 [ $? -ne 0 ] && jq -s -e 'map(select(.branch=="wt-guards" and .rule=="new-suppress")) | length == 1' "$VERA_EVENTS_FILE" >/dev/null \
   && ok "guards log from a worktree (git exports GIT_DIR to hooks there)" || bad "guards log from a worktree (git exports GIT_DIR to hooks there)"
+
+# Test weakening (ADR D10): guards judge every commit on its own, test source by test source, merges included
+W="$T/weak"; fixture "$W"; K="$W/m/src/test/kotlin"; mkdir -p "$K" "$W/m/src/archTest/kotlin"
+printf 'class T {\n    @Test fun a() { assertThat(1).isEqualTo(1) }\n    @Test fun b() { assertThat(2).isEqualTo(2) }\n}\n' > "$K/T.kt"
+printf 'class U {\n    @Test fun u() { assertThat(3).isEqualTo(3) }\n}\n' > "$K/U.kt"
+printf 'class A {\n    @ArchTest fun layers() { rule.check(classes) }\n    @ArchTest fun names() { other.check(classes) }\n}\n' > "$W/m/src/archTest/kotlin/A.kt"
+commit_in "$W" "test: base" && git -C "$W" update-ref refs/remotes/origin/main HEAD
+on() { git -C "$W" switch -q -C "$1" refs/remotes/origin/main; }   # a fresh branch on the fixture's main
+sha() { git -C "$W" rev-parse --short HEAD; }
+# weak <name> <n> <text>...: guards over origin/main..HEAD refuse n times (0 = pass), log one event per refusal, print each <text>
+weak() {
+  local name="guards weakening: $1" n="$2" s; shift 2; : > "$T/w.events"
+  out="$(GUARDS_OUT="$T/w.events" GUARDS_LOGGER="$T/logger" "$W/scripts/guards.sh" 2>&1)"; rc=$?
+  [ "$rc" -eq "$((n > 0))" ] && [ "$(printf '%s\n' "$out" | grep -c '^✖')" -eq "$n" ] && [ "$(wc -l < "$T/w.events")" -eq "$n" ] \
+    || { bad "$name (exit $rc)"; printf '%s\n' "$out"; return; }
+  for s in "$@"; do printf '%s\n' "$out" | grep -F -- "$s" >/dev/null || { bad "$name (no '$s')"; printf '%s\n' "$out"; return; }; done
+  ok "$name"
+}
+on g05; perl -pi -e 's/^class T/\@Disabled("flaky")\nclass T/' "$K/T.kt"; commit_in "$W" "test: park T"
+weak "@Disabled on a test class (G05)" 1 "test-disabled in $(sha)" "T.kt skip markers 0 → 1" "Test-Change: <reason>"
+on g04; perl -pi -e 's/assertThat/\/\/ assertThat/' "$K/T.kt"; commit_in "$W" "test: comment out"
+weak "assertions commented out (G04)" 1 "assertion-decrease in $(sha)" "T.kt assertions 2 → 0"
+on g02; git -C "$W" mv m/src/test/kotlin/T.kt m/src/test/kotlin/T.kt.disabled; commit_in "$W" "test: rename T"
+weak "a test renamed to *.kt.disabled (G02)" 1 "deleted-test-file in $(sha)" "moved out of the test sources to m/src/test/kotlin/T.kt.disabled"
+on g03; mkdir -p "$W/m/src/test/resources/parked" && git -C "$W" mv m/src/test/kotlin/T.kt m/src/test/resources/parked/; commit_in "$W" "test: park T"
+weak "a test moved to src/test/resources (G03)" 1 "deleted-test-file in $(sha)" "T.kt moved out"
+on g07; perl -ni -e 'print unless /names/' "$W/m/src/archTest/kotlin/A.kt"; commit_in "$W" "test: drop a rule"
+weak "an ArchUnit rule deleted (G07)" 2 "assertion-decrease in $(sha)" "A.kt assertions 2 → 1" "test-case-decrease in $(sha)"
+on g06b; perl -pi -e 's/assertThat/println/' "$K/T.kt"; perl -pi -e 's/(isEqualTo\(3\))/$1; assertThat(1).isNotNull(); assertThat(2).isNotNull()/' "$K/U.kt"
+commit_in "$W" "test: rebalance"; weak "losses in one file offset by gains in another (G06b)" 1 "assertion-decrease in $(sha)" "T.kt assertions 2 → 0"
+on trailer2; perl -ni -e 'print unless /fun b/' "$K/T.kt"; commit_in "$W" $'test: drop b\n\nTest-Change: b repeats a'
+perl -pi -e 's/assertThat/println/' "$K/U.kt"; commit_in "$W" "test: tidy U"
+weak "an earlier commit's trailer excuses no later one (trailer2)" 1 "assertion-decrease in $(sha)" "accepted test-case-decrease"
+on g08; perl -pi -e 's/assertThat/println/' "$K/U.kt"; commit_in "$W" "test: tidy U"; c1="$(sha)"
+printf 'notes\n' > "$W/notes.md"; commit_in "$W" $'docs: notes\n\nTest-Change: unrelated'
+weak "a trailer on an unrelated commit (G08)" 1 "assertion-decrease in $c1"
+on side; perl -pi -e 's/assertThat/println/' "$K/U.kt"; commit_in "$W" "test: tidy U"; c1="$(sha)"
+on g10; printf 'x\n' > "$W/x.md"; commit_in "$W" "docs: x"; git -C "$W" merge -q --no-ff -m $'Merge side\n\nTest-Change: merge' side
+weak "a trailer on a merge commit (G10)" 1 "assertion-decrease in $c1"
+on side; printf 'class V {\n    @Test fun v() { assertThat(4).isEqualTo(4) }\n}\n' > "$K/V.kt"; commit_in "$W" "test: V"
+on evil; printf 'x\n' > "$W/x.md"; commit_in "$W" "docs: x"; git -C "$W" merge -q --no-ff --no-commit side >/dev/null 2>&1
+perl -pi -e 's/assertThat\(2\)/println(2)/' "$K/T.kt"; git -C "$W" rm -q m/src/test/kotlin/U.kt; commit_in "$W" "Merge side"
+weak "a merge losing an assertion, or a test both parents kept" 2 "assertion-decrease in $(sha)" "T.kt assertions 2 → 1" "U.kt deleted"
+on side; perl -pi -e 's/(isEqualTo\(1\))/$1; assertThat(5).isEqualTo(5)/' "$K/T.kt"; commit_in "$W" "test: more a"
+on stacked; git -C "$W" cherry-pick -x side >/dev/null && perl -pi -e 's/^}/    \@Test fun c() { assertThat(6) }\n}/' "$K/T.kt"
+commit_in "$W" "test: c"; git -C "$W" merge -q --no-ff -m "Merge side" side >/dev/null 2>&1
+weak "a merge of a change both sides made, one side then extending it (stacked branch)" 0
+on moves; mkdir -p "$W/m/src/itest/java" && git -C "$W" mv m/src/test/kotlin/T.kt m/src/itest/java/; commit_in "$W" "test: move T"
+weak "a test moved within the test sources" 0
+on gains; perl -pi -e 's/^}/    \@Test fun c() { assertThat(5) } \/\/ \@Disabled assertThat(\n    val s = "\@Ignore assertThat(" \/* \@Disabled *\/\n}/' "$K/T.kt"
+commit_in "$W" "test: c"; weak "gains, and skip markers named only in a comment or a string" 0
+on own; perl -pi -e 's/assertThat/println/' "$K/U.kt"; commit_in "$W" $'test: drop the U check\n\nTest-Change: U repeats T'
+weak "the weakening commit's own trailer" 0 "accepted assertion-decrease"
+on unreadable; perl -pi -e 's/a\(\)/a2()/' "$K/T.kt"; commit_in "$W" "test: rename a"
+o="$(git -C "$W" rev-parse HEAD~1:m/src/test/kotlin/T.kt)"; rm -f "$W/.git/objects/${o:0:2}/${o:2}"   # breaks $W: keep last
+out="$("$W/scripts/guards.sh" 2>&1)"
+[ $? -eq 2 ] && printf '%s\n' "$out" | grep 'cannot read' >/dev/null && ok "guards weakening: an unreadable file is exit 2" || bad "guards weakening: an unreadable file is exit 2"
 
 exit $fail
