@@ -1735,6 +1735,7 @@ git commit -m "ci: add PR guards, Claude PR review and the harness-improve routi
 ### Task 9: The three saved fan-out workflows (D8)
 
 Workflow scripts use the Dynamic Workflows API (`meta`, `agent()`, `parallel()`, `pipeline()`). Load the `workflow-authoring` skill before executing this task and adjust only API details if the reference differs; the shape below is the contract.
+Runtime behaviour verified 2026-10-02: `agent()` returns null when its agent dies or is skipped, `parallel()` resolves a failed thunk to null and a `pipeline()` stage that throws drops its item to null, so every result is null-guarded before it is dereferenced. `meta` must be a pure literal, and scripts are plain JavaScript without `Date.now()`, `Math.random()` or an argless `new Date()`.
 
 **Files:**
 - Create: `.claude/workflows/audit-consistency.js`, `.claude/workflows/release-review.js`, `.claude/workflows/deep-research.js`
@@ -1776,6 +1777,9 @@ const inventory = await agent(
   'List every HTTP endpoint (controller class, method, path) under **/internal/web/** in this repository. Return JSON {"endpoints":[{"file":"","method":"","path":""}]}.',
   { label: 'inventory', phase: 'Inventory', schema: { type: 'object', properties: { endpoints: { type: 'array', items: { type: 'object', properties: { file: { type: 'string' }, method: { type: 'string' }, path: { type: 'string' } }, required: ['file', 'method', 'path'] } } }, required: ['endpoints'] } },
 )
+if (!inventory) {
+  return { error: 'The inventory agent returned nothing, so no endpoint was audited. Run the workflow again.' }
+}
 
 const results = await pipeline(
   inventory.endpoints,
@@ -1783,7 +1787,7 @@ const results = await pipeline(
     `Audit endpoint ${e.method} ${e.path} in ${e.file}. Check: (1) every query it triggers goes through the query module so ACL conditions are injected; (2) table/field names come from TableName/FieldName value objects; (3) metadata reads and writes happen in one transaction. Report findings with file:line and evidence. No style comments.`,
     { label: `audit:${e.path}`, phase: 'Audit', schema: FINDINGS },
   ),
-  (audit) => parallel(audit.findings.map((f) => () =>
+  (audit) => parallel(((audit && audit.findings) || []).map((f) => () =>
     agent(
       `Adversarially verify this finding by reading the code and, if possible, writing a throwaway test: ${JSON.stringify(f)}. Do not trust the auditor. Return isReal, a reproduction, and severity.`,
       { label: `verify:${f.title}`, phase: 'Verify', schema: VERDICT },
@@ -1821,11 +1825,15 @@ const perFile = await parallel(files.map((file) => () =>
     { label: `review:${file}`, phase: 'Review', schema: FILE_FINDINGS },
   ),
 ))
+const findings = perFile.filter(Boolean).flatMap((r) => r.findings)
 
 const ranked = await agent(
-  `Merge and rank these findings; drop duplicates; keep blocking first. Findings: ${JSON.stringify(perFile.flatMap((r) => r.findings))}. Return the same schema.`,
+  `Merge and rank these findings; drop duplicates; keep blocking first. Findings: ${JSON.stringify(findings)}. Return the same schema.`,
   { label: 'rank', phase: 'Rank', schema: FILE_FINDINGS },
 )
+if (!ranked) {
+  return { files: files.length, error: 'The rank agent returned nothing; the findings below are unranked.', findings }
+}
 return { files: files.length, findings: ranked.findings }
 ```
 
@@ -1848,17 +1856,22 @@ const reports = await parallel(angles.map((angle) => () =>
   agent(`Research: "${question}". Angle: ${angle}. Today is the current date; prefer sources from the last 12 months and date every claim. Return a summary and source URLs.`,
     { label: `research:${angle}`, phase: 'Research', schema: REPORT }),
 ))
+const delivered = reports.filter(Boolean)
+if (delivered.length === 0) return { error: 'All three researchers returned nothing, so there is nothing to synthesise. Run the workflow again.' }
 
 const synthesis = await agent(
-  `Synthesise these three reports into a decision memo with Options / Evidence / Recommendation / Accepted costs, in English, suitable as an ADR draft: ${JSON.stringify(reports)}`,
+  `Synthesise these reports into a decision memo with Options / Evidence / Recommendation / Accepted costs, in English, suitable as an ADR draft: ${JSON.stringify(delivered)}`,
   { label: 'synthesise', phase: 'Synthesise', schema: REPORT },
 )
-return synthesis
+return synthesis || { error: 'The synthesiser returned nothing; the research reports follow.', reports: delivered }
 ```
 
 - [ ] **Step 4: Validate against the reference and commit**
 
 Load the `workflow-authoring` skill and compare: `meta` literal, `agent(prompt, {label, phase, schema})`, `parallel(fns)`, `pipeline(items, stage1, stage2)`, `args`. Fix only naming differences.
+
+Syntax-check each file: copy it to a scratch file with `export ` removed from the `meta` line and the body wrapped in `(async () => { ... })()`, then run `node --check <copy>`.
+Expected: exit 0 for all three, and every `phase:` string in a file names one of its `meta.phases` titles.
 
 ```bash
 git add .claude/workflows
