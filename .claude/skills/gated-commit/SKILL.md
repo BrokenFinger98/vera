@@ -15,9 +15,9 @@ description: Commit staged changes as an English Conventional Commit with no AI 
 ## Gates before the preview
 1. `git diff --cached --name-only` empty → stage the files this commit is about (by path), or stop if there is nothing to commit.
 2. New production `.kt` without a test `.kt` in the same PR scope → warn loudly (push gate will enforce).
-3. Test files changed with fewer assertions → require trailer `Test-Change: <reason>` in the body.
-4. Files under `db/migration/` modified (not added) → refuse (immutable migrations).
-5. Non-ASCII Hangul in staged files other than `README.ko.md` → refuse (English artifacts).
+3. Test files deleted or with fewer assertions → require trailer `Test-Change: <reason>` with the reason in the body; adding tests needs none.
+4. Files under `db/migration/` that exist on `origin/main` and are modified → refuse (immutable migrations); a migration added in this branch may still change.
+5. Hangul in staged files other than `README.ko.md` → refuse (English artifacts). Scan them with `LC_ALL=C command grep -l -E $'[\xEA-\xED][\x80-\xBF][\x80-\xBF]'`; plain `grep` may be ugrep in the agent shell and miss byte patterns.
 6. Run `./scripts/check.sh`; paste its `RESULT` line into the preview.
 
 ## Process

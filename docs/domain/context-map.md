@@ -25,3 +25,6 @@ Arrows point from the module that depends to the module it depends on. `allowedD
 `package-info.java` mirrors this map, and both change in the same PR. `ModularityTest` fails when code
 crosses a boundary that `allowedDependencies` does not allow; it does not compare this document.
 The control plane (instance provisioning) is a separate deployable and is out of scope until Phase 5.
+
+`rule` also depends on `metadata` directly: `rule/package-info.java` allows `metadata` and `query`, and
+the diagram draws only the hop through `query`.

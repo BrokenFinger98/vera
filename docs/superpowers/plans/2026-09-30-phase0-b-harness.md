@@ -59,6 +59,7 @@ vera/
 ## Session start (the hook injects these; if missing, read them in this order)
 
 1. `.harness/state/goal.md` — current goal. If it says "awaiting decision", present options first.
+   It may be absent (fresh clone, CI); then proceed without it.
 2. `.harness/state/progress.md` — position (above the `<!-- ARCHIVE -->` marker).
 3. `docs/llm-wiki/index.md` — scan Decisions; if the request conflicts with an ADR, open it.
 
@@ -76,13 +77,13 @@ code, tests and docs**, run the flow and prove completion with evidence (command
 
 | Area | Decision |
 |---|---|
-| Stack | Kotlin 2.3.21 · Java 25 · Spring Boot 4.1 · Spring Modulith 2.1 · PostgreSQL 18 · jOOQ · Flyway |
-| Shape | Modular monolith. Modules = direct sub-packages of `com.brokenfinger.vera`; `apps → platform` only |
+| Stack | Kotlin 2.3 (BOM-managed) · Java 25 · Spring Boot 4.1 · Spring Modulith 2.1 · PostgreSQL 18 · jOOQ · Flyway |
+| Shape | Modular monolith. Modules = direct sub-packages of `com.brokenfinger.vera`; platform never depends on apps or ingestion; allowed edges = each module's `allowedDependencies` |
 | Storage | Fixed attributes as real columns, extension attributes as JSONB, transactional DDL for table creation |
 | Persistence | jOOQ only — no JPA, no QueryDSL (tables exist at runtime, not compile time) |
 | Scripts | GraalJS `js-community` sandbox: `HostAccess.NONE`, `IOAccess.NONE`, statement limit |
 | Tests | Real PostgreSQL via Testcontainers; H2 is forbidden. Three suites: `test`, `itest`, `archTest` |
-| Artifacts | English only (code, commits, ADRs, wiki, this file). `README.ko.md` is the sole Korean twin |
+| Artifacts | English only (code, commits, issues, PRs, ADRs, wiki, this file). `README.ko.md` is the sole Korean twin |
 
 ## Forbidden — reject on sight, explain, then rediscuss
 
@@ -90,7 +91,10 @@ code, tests and docs**, run the flow and prove completion with evidence (command
 - Weakening or deleting a test, or adding `@Suppress`, to get green. Fix the code.
 - detekt baseline files, weakening detekt's `failOnSeverity = Info`, lowering Kover `minBound`.
 - `cd` inside a Bash command (deny rules on `.env*` make it prompt; use absolute paths, `git -C`).
-- Direct commits or pushes to `main`; work without an issue; PR > 400 changed lines without a split rationale.
+- Direct commits or pushes to `main`; PR > 400 changed lines without a split rationale.
+- Work without an issue (exception: harness-improve proposal PRs on `harness/*` branches).
+- `--no-verify`, `git commit -n`, changing or unsetting `core.hooksPath` (CI re-runs the guards).
+- AI attribution in commits or PRs (`.claude/settings.json` turns Claude Code's off).
 - Employer code, designs, customer data or names. Public sources only.
 - Non-English text in committed files (except `README.ko.md`).
 - Swallowing exceptions, `printStackTrace`, `TODO`/`FIXME` comments (track in issues).
@@ -103,9 +107,14 @@ code, tests and docs**, run the flow and prove completion with evidence (command
 ./scripts/itest.sh    # Testcontainers PostgreSQL 18
 ```
 
+Spring context tests live in `:bootstrap` until Phase 1 decides a per-module test harness: run
+`./scripts/itest.sh` for the whole repo (a module-scoped run that executes 0 tests proves nothing).
+
 Also: every new production `.kt` ships with a test in the same PR; `progress.md` is updated in
-the branch; decisions get an ADR (the push gate checks `docs/llm-wiki/` changed, escape hatch
-`Wiki-Skip: <reason>` trailer); test changes carry a `Test-Change: <reason>` trailer.
+the branch; decisions get an ADR (the push gate needs a change under `docs/llm-wiki/wiki/` other
+than `concepts/lessons.md`, or a `Wiki-Skip: <reason>` trailer). `Test-Change: <reason>` is only for
+deleting tests or reducing assertions, with the reason in the commit body; adding tests needs none.
+The `test-change` PR label is separate: it marks any change under `src/test|itest|archTest`.
 
 ## Development flow (mandatory)
 
@@ -116,18 +125,20 @@ the branch; decisions get an ADR (the push gate checks `docs/llm-wiki/` changed,
 You run every step; the owner approves the ticket preview (/ticket), the design review and the merge (/pull-request).
 Explore → Plan → Implement → Verify. Skip the plan only when the diff fits one sentence.
 Large features: interview the owner, write the spec to `docs/superpowers/specs/`, execute in a fresh session.
-Parallel work: one owned module per ticket; shared files (root build files, migrations) only in solo tickets.
+Parallel work: one owned module per ticket plus the always-allowed files (`.harness/state/progress.md`,
+`.harness/events.jsonl`, `docs/llm-wiki/**`, `docs/domain/glossary.md`, `docs/specs/<module>.md`);
+root build files and migrations only in solo tickets.
 
 ## Evidence format for completion claims
 
 1. Command run and its last line (`RESULT <name> exit=0 ...`).
-2. `git diff --stat main...HEAD`.
+2. `git diff --stat origin/main...HEAD`.
 3. Reviewer/critic findings and what you did with each.
 
 ## State file operations
 
 - Design decision → ADR file in `docs/llm-wiki/wiki/decisions/<date>-<slug>.md` (one per decision).
-- Step done → `progress.md` entry (date, ✅, commit hash, evidence).
+- Step done → `progress.md` entry (date, ✅, PR number, evidence).
 - New phase → rewrite `goal.md` completely; history lives in `progress.md`.
 - Conflict → **code beats state files** (they may be stale).
 - Something slowed you or a rule was missing → `/finish-task` records it in `docs/llm-wiki/wiki/concepts/lessons.md`.
@@ -150,30 +161,32 @@ ln -s CLAUDE.md /Users/yu-sun00/Desktop/vera/AGENTS.md
 `REVIEW.md`:
 
 ```markdown
-# Review contract for AI reviewers (Claude Code `/code-review`, `claude-review.yml`)
+# Review contract for AI reviewers (`claude-review.yml` and the critic in /finish-task)
 
 Report only findings that affect **correctness, the stated requirements, security, or an
 immutable decision in `CLAUDE.md`**. Style is owned by ktfmt and detekt — never comment on it.
 
 ## Severity
 
-- **blocking** — wrong behaviour, data loss, security hole, module-boundary violation, test weakened/deleted,
-  migration edited, immutable decision contradicted, PR > 400 lines without split rationale.
+- **blocking** — wrong behaviour, data loss, security hole, module-boundary violation, test weakened/deleted
+  without a `Test-Change:` trailer and explanation, migration edited, immutable decision contradicted,
+  PR > 400 lines without split rationale.
 - **major** — requirement from the ticket's acceptance criteria not covered by a test; missing rollback note.
-- **minor** — naming that contradicts `docs/domain/glossary.md`; missing ADR for an evident decision.
+- **minor** — naming that contradicts `docs/domain/glossary.md`; missing ADR for an evident decision;
+  domain identifier or name not wrapped in a `value class`; `if … else` where an early return works.
 - Everything else: do not report.
 
 ## Must check on every PR
 
 1. Every `WHEN … THE SYSTEM SHALL …` line in the linked issue has a test.
-2. `git diff --stat` matches the ticket's owned module; no unrelated files.
+2. `git diff --stat` shows only the ticket's owned module plus the always-allowed files in CLAUDE.md; no unrelated files.
 3. No assertion removed or weakened (compare `assertThat`/`assertThrows` counts).
 4. New tables/columns come with a new `V<timestamp>__*.sql`, never an edited one.
 5. Logs and error messages contain no PII, secrets or customer identifiers.
 
 ## Skip
 
-`docs/llm-wiki/raw/**`, `*.md` outside `docs/superpowers/specs/`, generated PlantUML.
+`docs/llm-wiki/raw/**`, `docs/superpowers/plans/**`, generated PlantUML — read them for context, do not report on them.
 
 ## Output
 
@@ -209,7 +222,7 @@ where possible: detekt (`config/detekt/detekt.yml`), ArchUnit (`bootstrap/src/ar
 ## Core principles (team standard, encoded in detekt)
 
 1. One method = one job, ≤10 lines (`LongMethod allowedLines 10`).
-2. No `else`; early return (`NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
+2. No `if … else`; early return (`when` may use `else ->`; `NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
 3. Wrap primitives and collections in domain objects (`value class` with one property — review; no ArchUnit rule sees it).
 4. Behaviour methods over getters (a domain object does things; it does not expose fields for others to decide).
 5. Composition over inheritance (`AbstractClassCanBeConcreteClass`, `AbstractClassCanBeInterface`, `UnnecessaryInheritance`).
@@ -224,6 +237,7 @@ Effective Kotlin defaults: `val` over `var`, no `!!` in production code, `data c
 <module>/domain/        pure Kotlin: entities, value objects, domain services, exceptions. Imports nothing from Spring, jOOQ, Jakarta
 <module>/application/   use cases, transactions (@Transactional lives here), ports (interfaces) the domain needs
 <module>/internal/      adapters: jOOQ repositories, web controllers, Kafka consumers, caches. `internal` visibility
+<module>/internal/web/  controllers and their request/response DTOs (Spring MVC)
 ```
 
 Dependency direction: `internal → application → domain`. Other modules see only the module root package
@@ -239,8 +253,9 @@ and named interfaces (`@NamedInterface`; today `metadata.domain`).
 
 ## Persistence
 
-- jOOQ `DSLContext` from Spring; never a second one. Dynamic tables use `DSL.table(name)` / `DSL.field(name)` with
-  names validated by `TableName`/`FieldName` value objects first — never concatenate raw user input into SQL.
+- jOOQ `DSLContext` from Spring; never a second one. Dynamic tables use `DSL.table(DSL.name(...))` /
+  `DSL.field(DSL.name(...), type)` with names validated by `TableName`/`FieldName` value objects first — never
+  the `String` overloads (plain SQL, unquoted) and never raw user input in SQL.
 - DDL and the metadata row change in **one** transaction (PoC 1 proves PostgreSQL rolls DDL back).
 - Migrations: `bootstrap/src/main/resources/db/migration/V<yyyyMMdd>_<hhmm>__<slug>.sql`. Immutable once merged.
 
@@ -248,6 +263,7 @@ and named interfaces (`@NamedInterface`; today `metadata.domain`).
 
 - Unit (`src/test`): domain and application logic, no Spring context, AssertJ.
 - Integration (`src/itest`): `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`; real PostgreSQL 18.
+- Spring context tests (`@SpringBootTest`, `@WebMvcTest`) live in `:bootstrap` until Phase 1 decides a per-module harness.
 - Architecture (`src/archTest`): ArchUnit rules in `bootstrap` — `LayerRulesTest`, `NamingRulesTest`, `ImportScopeTest`.
 - Name tests as behaviour: `` `rejects names longer than 63 characters` ``. One behaviour per test.
 - Acceptance criteria from the ticket (EARS) map 1:1 to test names.
@@ -320,6 +336,9 @@ Arrows point from the module that depends to the module it depends on. `allowedD
 `package-info.java` mirrors this map, and both change in the same PR. `ModularityTest` fails when code
 crosses a boundary that `allowedDependencies` does not allow; it does not compare this document.
 The control plane (instance provisioning) is a separate deployable and is out of scope until Phase 5.
+
+`rule` also depends on `metadata` directly: `rule/package-info.java` allows `metadata` and `query`, and
+the diagram draws only the hop through `query`.
 ```
 
 `docs/specs/README.md`:
@@ -704,14 +723,15 @@ paths:
 paths:
   - "**/internal/**/*Repository*.kt"
   - "**/internal/**/*Jooq*.kt"
+  - "**/platform/query/src/main/**"
 ---
 # jOOQ adapters
 
 - Repository implementations MUST be `internal` and named `Jooq<Aggregate>Repository`.
-- Dynamic identifiers MUST come from `TableName`/`FieldName` value objects; never build SQL from raw strings.
+- Dynamic identifiers MUST come from `TableName`/`FieldName` value objects and be rendered with `DSL.table(DSL.name(...))` / `DSL.field(DSL.name(...), type)`; never the `String` overloads (plain SQL, unquoted), never SQL built from raw strings.
 - Use the Spring-provided `DSLContext`; never construct a second one (breaks transactional DDL — PoC 1).
 - Return domain types, not jOOQ `Record`s, from the repository boundary.
-- Verify: `./scripts/itest.sh :<module>`.
+- Verify: `./scripts/itest.sh` (no module argument; the Spring context tests live in `:bootstrap` for now).
 ```
 
 `.claude/rules/web.md`:
@@ -727,7 +747,7 @@ paths:
 - Request/response DTOs are `data class`es in the same package; never expose domain objects directly.
 - Validation with Jakarta annotations on DTOs; domain value objects validate again on construction.
 - Error responses follow RFC 9457 problem details (`ProblemDetail`), never stack traces.
-- Verify: a `@WebMvcTest` (starter `spring-boot-starter-webmvc-test`) per controller.
+- Verify: a `@WebMvcTest` (starter `spring-boot-starter-webmvc-test`) per controller, in `:bootstrap` for now.
 ```
 
 `.claude/rules/test.md`:
@@ -743,8 +763,8 @@ paths:
 
 - One behaviour per test; the name states the behaviour in backticks.
 - Acceptance criteria (`WHEN … THE SYSTEM SHALL …`) from the ticket map to tests 1:1 — name them alike.
-- `itest`: `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`. No H2, no mocks of the database.
-- Never delete or weaken an assertion to go green. If a test is wrong, say so in the commit body and add the trailer `Test-Change: <reason>` (pre-push guard).
+- `itest`: `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`; Spring context tests live in `:bootstrap` for now. No H2, no mocks of the database.
+- Never delete or weaken an assertion to go green. If a test is wrong, deleting it or reducing assertions needs the reason in the commit body and the trailer `Test-Change: <reason>` (pre-push guard); adding tests needs none.
 - Fixtures MUST NOT contain real names, emails, serial numbers or the words `password=`/`token=` with literal values (secret hook false-positives).
 ```
 
@@ -760,7 +780,7 @@ paths:
 - File name `V<yyyyMMdd>_<hhmm>__<slug>.sql`; timestamp versions avoid worktree collisions.
 - A merged migration is immutable. Fix forward with a new file (pre-push guard blocks edits to merged `V*.sql`).
 - Every DDL change ships with its rollback note in the PR (a `drop`/`alter` statement or "plain revert").
-- No data migrations in DDL files; data moves go through an `ApplicationRunner` documented in an ADR.
+- No data migrations in DDL files. Data migrations need an ADR before the first one (mechanism undecided: a Flyway Java migration or an idempotent runner).
 ```
 
 - [ ] **Step 2: Commit**
@@ -854,9 +874,9 @@ description: Commit staged changes as an English Conventional Commit with no AI 
 ## Gates before the preview
 1. `git diff --cached --name-only` empty → stage the files this commit is about (by path), or stop if there is nothing to commit.
 2. New production `.kt` without a test `.kt` in the same PR scope → warn loudly (push gate will enforce).
-3. Test files changed with fewer assertions → require trailer `Test-Change: <reason>` in the body.
-4. Files under `db/migration/` modified (not added) → refuse (immutable migrations).
-5. Non-ASCII Hangul in staged files other than `README.ko.md` → refuse (English artifacts).
+3. Test files deleted or with fewer assertions → require trailer `Test-Change: <reason>` with the reason in the body; adding tests needs none.
+4. Files under `db/migration/` that exist on `origin/main` and are modified → refuse (immutable migrations); a migration added in this branch may still change.
+5. Hangul in staged files other than `README.ko.md` → refuse (English artifacts). Scan them with `LC_ALL=C command grep -l -E $'[\xEA-\xED][\x80-\xBF][\x80-\xBF]'`; plain `grep` may be ugrep in the agent shell and miss byte patterns.
 6. Run `./scripts/check.sh`; paste its `RESULT` line into the preview.
 
 ## Process

@@ -7,7 +7,7 @@ where possible: detekt (`config/detekt/detekt.yml`), ArchUnit (`bootstrap/src/ar
 ## Core principles (team standard, encoded in detekt)
 
 1. One method = one job, ≤10 lines (`LongMethod allowedLines 10`).
-2. No `else`; early return (`NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
+2. No `if … else`; early return (`when` may use `else ->`; `NestedBlockDepth allowedDepth 2`, `ReturnCount` disabled on purpose).
 3. Wrap primitives and collections in domain objects (`value class` with one property — review; no ArchUnit rule sees it).
 4. Behaviour methods over getters (a domain object does things; it does not expose fields for others to decide).
 5. Composition over inheritance (`AbstractClassCanBeConcreteClass`, `AbstractClassCanBeInterface`, `UnnecessaryInheritance`).
@@ -22,6 +22,7 @@ Effective Kotlin defaults: `val` over `var`, no `!!` in production code, `data c
 <module>/domain/        pure Kotlin: entities, value objects, domain services, exceptions. Imports nothing from Spring, jOOQ, Jakarta
 <module>/application/   use cases, transactions (@Transactional lives here), ports (interfaces) the domain needs
 <module>/internal/      adapters: jOOQ repositories, web controllers, Kafka consumers, caches. `internal` visibility
+<module>/internal/web/  controllers and their request/response DTOs (Spring MVC)
 ```
 
 Dependency direction: `internal → application → domain`. Other modules see only the module root package
@@ -37,8 +38,9 @@ and named interfaces (`@NamedInterface`; today `metadata.domain`).
 
 ## Persistence
 
-- jOOQ `DSLContext` from Spring; never a second one. Dynamic tables use `DSL.table(name)` / `DSL.field(name)` with
-  names validated by `TableName`/`FieldName` value objects first — never concatenate raw user input into SQL.
+- jOOQ `DSLContext` from Spring; never a second one. Dynamic tables use `DSL.table(DSL.name(...))` /
+  `DSL.field(DSL.name(...), type)` with names validated by `TableName`/`FieldName` value objects first — never
+  the `String` overloads (plain SQL, unquoted) and never raw user input in SQL.
 - DDL and the metadata row change in **one** transaction (PoC 1 proves PostgreSQL rolls DDL back).
 - Migrations: `bootstrap/src/main/resources/db/migration/V<yyyyMMdd>_<hhmm>__<slug>.sql`. Immutable once merged.
 
@@ -46,6 +48,7 @@ and named interfaces (`@NamedInterface`; today `metadata.domain`).
 
 - Unit (`src/test`): domain and application logic, no Spring context, AssertJ.
 - Integration (`src/itest`): `@SpringBootTest` + `@Import(TestcontainersConfiguration::class)`; real PostgreSQL 18.
+- Spring context tests (`@SpringBootTest`, `@WebMvcTest`) live in `:bootstrap` until Phase 1 decides a per-module harness.
 - Architecture (`src/archTest`): ArchUnit rules in `bootstrap` — `LayerRulesTest`, `NamingRulesTest`, `ImportScopeTest`.
 - Name tests as behaviour: `` `rejects names longer than 63 characters` ``. One behaviour per test.
 - Acceptance criteria from the ticket (EARS) map 1:1 to test names.
