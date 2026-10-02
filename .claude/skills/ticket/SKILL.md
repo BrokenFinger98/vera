@@ -41,7 +41,7 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 - ./scripts/itest.sh
 
 ## Size guard
-≤400 changed lines, ≤10 files. If exceeded: split into stacked PRs and link them here.
+≤400 changed lines, ≤10 files (`.harness/events.jsonl` excluded). If exceeded: split into stacked PRs and link them here.
 
 ## Risks / Rollback
 - <migration reversal or "plain revert">

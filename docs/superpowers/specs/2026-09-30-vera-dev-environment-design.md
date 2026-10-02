@@ -28,7 +28,7 @@ comes from the origin chat and is **not** redesigned here; it is restated only w
 | D6 | GraalJS `js-community` 25.x on the stock JDK (interpreter only) to start; benchmark before considering GraalVM CE as runtime | Rule-engine performance target is deferred to Phase 3 |
 | D7 | Stop-hook quality gate runs as a **trial**; after one month audit whether it actually blocked a mistake, and keep or delete accordingly | Follows the owner's harness-debt-audit principle ("evidence of firing, or delete") |
 | D8 | **No graph runtime for the pipeline.** "Graph engineering" (2026-07 buzzword) is workflow orchestration renamed; the harness-dev loop is already an implicit research → implement → verify → merge graph. Graphs are used only where they pay: dependency-aware ticket scheduling (adopt), three saved fan-out Workflows (trial), code knowledge graph later (assess) | No LangGraph / Agent Framework / custom orchestrator; no always-on ultracode |
-| D9 | **Closed self-improvement loop, human-approved.** Gate firings are logged as events, lessons are counted, a weekly routine proposes rule/hook/lint changes as PRs, a monthly pass proposes deletions of rules that never fired. Only the owner merges those PRs | Mitigates the measured self-evaluation bias of autonomous loops (arXiv 2607.25152: 56% of "improvements" changed nothing) |
+| D9 | **Closed self-improvement loop, human-approved.** Gate firings are logged as events, lessons are counted, a weekly routine proposes rule/hook/lint changes as PRs (issues for `.claude/rules` or `.claude/hooks`), a monthly pass proposes deletions of rules that never fired. Only the owner merges those PRs | Mitigates the measured self-evaluation bias of autonomous loops (arXiv 2607.25152: 56% of "improvements" changed nothing) |
 
 ## 3. Operating model
 
@@ -119,7 +119,7 @@ Every guard's failure output states **what to change and how** — the message i
 
 ## 7. Tickets, specs, Definition of Done
 
-- **Decomposition**: Phase (GitHub milestone) → Epic (label) → Task (one issue = one PR). Size guard: ≤ 400 changed lines, ≤ 10 files,
+- **Decomposition**: Phase (GitHub milestone) → Epic (label) → Task (one issue = one PR). Size guard: ≤ 400 changed lines, ≤ 10 files (`.harness/events.jsonl` excluded),
   one owned module, at most one new domain concept, half a day. Larger work becomes stacked PRs.
 - **Ticket template** (`ISSUE_TEMPLATE/task.yml`): Goal (one sentence) · Context (spec link, ADR link, **owned module**) ·
   Acceptance Criteria in **EARS** (`WHEN <condition> THE SYSTEM SHALL <result>`, including error cases) · Non-goals · **Verify commands** ·
@@ -133,7 +133,7 @@ Every guard's failure output states **what to change and how** — the message i
   2. last 30 lines and exit code of `scripts/check.sh` and `scripts/itest.sh`;
   3. `git diff --stat main...HEAD` pasted (git output, not memory);
   4. test changes explained; no weakened or deleted assertions without `Test-Change:` trailer;
-  5. ≤ 400 lines or split rationale;
+  5. ≤ 400 lines (`.harness/events.jsonl` excluded) or split rationale;
   6. ADR / module spec updated, or "no decision made";
   7. `.harness/state/progress.md` updated in the branch;
   8. rollback note (migration reversal or "plain revert suffices");

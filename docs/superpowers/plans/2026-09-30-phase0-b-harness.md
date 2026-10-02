@@ -1026,7 +1026,7 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 - ./scripts/itest.sh
 
 ## Size guard
-≤400 changed lines, ≤10 files. If exceeded: split into stacked PRs and link them here.
+≤400 changed lines, ≤10 files (`.harness/events.jsonl` excluded). If exceeded: split into stacked PRs and link them here.
 
 ## Risks / Rollback
 - <migration reversal or "plain revert">
@@ -1255,6 +1255,7 @@ Read this first. Every page is registered here; entries start with a date so mer
 # Log (append-only)
 
 ## [2026-09-30] bootstrap | wiki created with schema, index, lessons.md, 9 ADRs (D1–D9), 1 source stub
+## [2026-10-02] update | ADRs D1, D2, D4, D5, D6, D7, D9 corrected during Plan B execution (facts, flow and event-log changes)
 ```
 
 `docs/llm-wiki/wiki/concepts/lessons.md`:
@@ -1667,7 +1668,7 @@ Reviewer / critic findings and disposition:
 - [ ] Every acceptance criterion in the issue has a test
 - [ ] `check.sh` and `itest.sh` output above, exit 0
 - [ ] Only the owned module changed, plus the always-allowed files in CLAUDE.md (or split rationale below)
-- [ ] ≤ 400 changed lines, one behaviour change
+- [ ] ≤ 400 changed lines (`.harness/events.jsonl` excluded), one behaviour change
 - [ ] `Test-Change:` trailer if tests were deleted or assertions reduced; label `test-change` if `src/test|itest|archTest` touched
 - [ ] ADR / module spec updated, or "no decision made"
 - [ ] `.harness/state/progress.md` updated in this branch (issue `#<n>`)
@@ -1679,7 +1680,7 @@ Reviewer / critic findings and disposition:
 
 ```yaml
 name: Task
-description: One behaviour change, one PR, ≤400 lines. Filled by /ticket.
+description: One behaviour change, one PR, ≤400 lines (.harness/events.jsonl excluded). Filled by /ticket.
 labels: ["task"]
 body:
   - type: input

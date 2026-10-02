@@ -1,5 +1,5 @@
 name: Task
-description: One behaviour change, one PR, ≤400 lines. Filled by /ticket.
+description: One behaviour change, one PR, ≤400 lines (.harness/events.jsonl excluded). Filled by /ticket.
 labels: ["task"]
 body:
   - type: input
