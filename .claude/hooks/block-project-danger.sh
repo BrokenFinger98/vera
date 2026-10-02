@@ -7,6 +7,13 @@ CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
 
+# The patterns below read NORM: the command with git's global options stripped ('git -C <path> push' → 'git push';
+# CLAUDE.md mandates -C) and quotes dropped. One option per pass, those taking a value first, until none is left.
+# hooks_path_values reads $CMD itself, because 'git -c core.hooksPath=...' is one of the stripped options.
+GIT_OPT_ARG="(-[Cc]|--(git-dir|work-tree|namespace|config-env|attr-source))[[:space:]]+(\"[^\"]*\"|'[^']*'|[^[:space:];&|]+)"
+NORM="$(printf '%s' "$CMD" | sed -E -e ':a' -e "s/(git)[[:space:]]+$GIT_OPT_ARG/\1/g" -e 'ta' \
+  -e 's/(git)[[:space:]]+-[^[:space:];&|]*/\1/g' -e 'ta' -e "s/[\"']//g")"
+
 block() {
   "$LOG" block-danger "$2" "$CMD"
   echo "🚫 blocked: $1" >&2
@@ -14,7 +21,7 @@ block() {
   echo "   $3" >&2
   exit 2
 }
-m() { printf '%s' "$CMD" | grep -qiE "$1"; }
+m() { printf '%s' "$NORM" | grep -qiE "$1"; }
 # Values the command gives core.hooksPath ('git config ... core.hooksPath V', 'git -c core.hooksPath=V').
 # A read gives none; the fd number of a redirect after a read ('core.hooksPath 2>/dev/null') is dropped.
 hooks_path_values() {
@@ -25,7 +32,7 @@ hooks_path_values() {
 m 'flyway(Clean|Repair)|flyway[[:space:]]+(clean|repair)' && block "Flyway clean/repair" flyway-clean "Migrations are immutable; fix forward with a new V<timestamp>__*.sql."
 m 'compose[[:space:]]+down.*(-v|--volumes)' && block "compose down with volumes" compose-down-volumes "Volumes hold the demo database; use 'docker compose down' without -v."
 m 'drop[[:space:]]+schema' && block "DROP SCHEMA" drop-schema "Schema changes go through Flyway migrations reviewed in a PR."
-m 'git[[:space:]]+(checkout|restore)[[:space:]]+(--[[:space:]]+)?\.([[:space:]]|$)' && block "discarding all working-tree changes" git-discard-all "Discard single files by path, never the whole tree."
+m 'git[[:space:]]+(checkout|restore)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(\./?|:/)([[:space:];&|]|$)' && block "discarding all working-tree changes" git-discard-all "Discard single files by path, never the whole tree."
 m 'git[[:space:]]+push.*(--force|-f([[:space:]]|$))' && block "force push" force-push "History is linear and protected; open a new commit instead."
 m 'git[[:space:]].*--no-verify([^-[:alnum:]]|$)' && block "skipping git hooks with --no-verify" no-verify "The guards are fail-closed; fix the code instead of skipping them."
 m 'unset[^;&|]*core\.hookspath' && block "unsetting core.hooksPath" hooks-path "core.hooksPath installs the push gate; it stays .githooks."

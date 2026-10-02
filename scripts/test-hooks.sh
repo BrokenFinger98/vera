@@ -31,15 +31,20 @@ fi
 # format: ignores non-Kotlin files and exits 0
 echo '{"tool_input":{"file_path":"'"$ROOT"'/README.md"}}' | "$H/format.sh" && ok "format ignores md" || bad "format ignores md"
 
-# block-project-danger: blocks the destructive and hook-bypass patterns (exit 2), passes normal commands (exit 0).
+# block-project-danger: blocks the destructive and hook-bypass patterns (exit 2), passes normal commands (exit 0),
+# also behind git's global options ('git -C <path> ...', the form CLAUDE.md mandates).
 # Events written by these probes are discarded by restoring the backup (portable; macOS head has no negative -n).
 bak="$(mktemp)"; cp "$ROOT/.harness/events.jsonl" "$bak" 2>/dev/null || : > "$bak"
 for c in "./gradlew flywayClean" "docker compose down -v" "psql -c 'drop schema vera cascade'" "git checkout -- ." "git push --force origin main" \
-         "git push --no-verify origin main" "git config core.hooksPath /dev/null" "git config --unset core.hooksPath" "git -c core.hooksPath=/dev/null push origin main"; do
+         "git push --no-verify origin main" "git config core.hooksPath /dev/null" "git config --unset core.hooksPath" "git -c core.hooksPath=/dev/null push origin main" \
+         "git -C $ROOT checkout -- ." "git -C $ROOT restore ." "git -C $ROOT push --force origin x" "git -C $ROOT push -f origin x" \
+         "git checkout HEAD -- ." "git -C $ROOT restore --source=HEAD ." "git -C $ROOT push --no-verify origin x"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1
   [ $? -eq 2 ] && ok "block-project-danger blocks: $c" || bad "block-project-danger blocks: $c"
 done
-for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config --get core.hooksPath"; do
+for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config --get core.hooksPath" \
+         "git -C $ROOT checkout -- docs/x.md" "git -C $ROOT checkout -- ./docs/x.md" "git -C $ROOT checkout -- .gitattributes" \
+         "git -C $ROOT push origin x" "git -C $ROOT status" "git -C $ROOT config core.hooksPath .githooks"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes: $c" || bad "block-project-danger passes: $c"
 done
 cp "$bak" "$ROOT/.harness/events.jsonl"; rm -f "$bak"

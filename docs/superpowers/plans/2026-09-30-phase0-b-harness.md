@@ -31,7 +31,7 @@ vera/
 ├── .harness/{state/{goal.md.example,progress.md},events.jsonl,metrics.md}
 ├── .claude/
 │   ├── settings.json
-│   ├── hooks/{inject-state.sh,stop-gate.sh,format.sh,log-gate-event.sh}
+│   ├── hooks/{inject-state.sh,stop-gate.sh,format.sh,log-gate-event.sh,block-project-danger.sh}
 │   ├── rules/{domain.md,persistence.md,web.md,test.md,migration.md}
 │   ├── skills/{ticket,gated-commit,pull-request,start-task,finish-task,wiki-ingest,wiki-query,wiki-lint}/SKILL.md
 │   └── workflows/{audit-consistency.js,release-review.js,deep-research.js}
@@ -495,6 +495,13 @@ CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
 
+# The patterns below read NORM: the command with git's global options stripped ('git -C <path> push' → 'git push';
+# CLAUDE.md mandates -C) and quotes dropped. One option per pass, those taking a value first, until none is left.
+# hooks_path_values reads $CMD itself, because 'git -c core.hooksPath=...' is one of the stripped options.
+GIT_OPT_ARG="(-[Cc]|--(git-dir|work-tree|namespace|config-env|attr-source))[[:space:]]+(\"[^\"]*\"|'[^']*'|[^[:space:];&|]+)"
+NORM="$(printf '%s' "$CMD" | sed -E -e ':a' -e "s/(git)[[:space:]]+$GIT_OPT_ARG/\1/g" -e 'ta' \
+  -e 's/(git)[[:space:]]+-[^[:space:];&|]*/\1/g' -e 'ta' -e "s/[\"']//g")"
+
 block() {
   "$LOG" block-danger "$2" "$CMD"
   echo "🚫 blocked: $1" >&2
@@ -502,7 +509,7 @@ block() {
   echo "   $3" >&2
   exit 2
 }
-m() { printf '%s' "$CMD" | grep -qiE "$1"; }
+m() { printf '%s' "$NORM" | grep -qiE "$1"; }
 # Values the command gives core.hooksPath ('git config ... core.hooksPath V', 'git -c core.hooksPath=V').
 # A read gives none; the fd number of a redirect after a read ('core.hooksPath 2>/dev/null') is dropped.
 hooks_path_values() {
@@ -513,7 +520,7 @@ hooks_path_values() {
 m 'flyway(Clean|Repair)|flyway[[:space:]]+(clean|repair)' && block "Flyway clean/repair" flyway-clean "Migrations are immutable; fix forward with a new V<timestamp>__*.sql."
 m 'compose[[:space:]]+down.*(-v|--volumes)' && block "compose down with volumes" compose-down-volumes "Volumes hold the demo database; use 'docker compose down' without -v."
 m 'drop[[:space:]]+schema' && block "DROP SCHEMA" drop-schema "Schema changes go through Flyway migrations reviewed in a PR."
-m 'git[[:space:]]+(checkout|restore)[[:space:]]+(--[[:space:]]+)?\.([[:space:]]|$)' && block "discarding all working-tree changes" git-discard-all "Discard single files by path, never the whole tree."
+m 'git[[:space:]]+(checkout|restore)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(\./?|:/)([[:space:];&|]|$)' && block "discarding all working-tree changes" git-discard-all "Discard single files by path, never the whole tree."
 m 'git[[:space:]]+push.*(--force|-f([[:space:]]|$))' && block "force push" force-push "History is linear and protected; open a new commit instead."
 m 'git[[:space:]].*--no-verify([^-[:alnum:]]|$)' && block "skipping git hooks with --no-verify" no-verify "The guards are fail-closed; fix the code instead of skipping them."
 m 'unset[^;&|]*core\.hookspath' && block "unsetting core.hooksPath" hooks-path "core.hooksPath installs the push gate; it stays .githooks."
@@ -610,15 +617,20 @@ fi
 # format: ignores non-Kotlin files and exits 0
 echo '{"tool_input":{"file_path":"'"$ROOT"'/README.md"}}' | "$H/format.sh" && ok "format ignores md" || bad "format ignores md"
 
-# block-project-danger: blocks the destructive and hook-bypass patterns (exit 2), passes normal commands (exit 0).
+# block-project-danger: blocks the destructive and hook-bypass patterns (exit 2), passes normal commands (exit 0),
+# also behind git's global options ('git -C <path> ...', the form CLAUDE.md mandates).
 # Events written by these probes are discarded by restoring the backup (portable; macOS head has no negative -n).
 bak="$(mktemp)"; cp "$ROOT/.harness/events.jsonl" "$bak" 2>/dev/null || : > "$bak"
 for c in "./gradlew flywayClean" "docker compose down -v" "psql -c 'drop schema vera cascade'" "git checkout -- ." "git push --force origin main" \
-         "git push --no-verify origin main" "git config core.hooksPath /dev/null" "git config --unset core.hooksPath" "git -c core.hooksPath=/dev/null push origin main"; do
+         "git push --no-verify origin main" "git config core.hooksPath /dev/null" "git config --unset core.hooksPath" "git -c core.hooksPath=/dev/null push origin main" \
+         "git -C $ROOT checkout -- ." "git -C $ROOT restore ." "git -C $ROOT push --force origin x" "git -C $ROOT push -f origin x" \
+         "git checkout HEAD -- ." "git -C $ROOT restore --source=HEAD ." "git -C $ROOT push --no-verify origin x"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1
   [ $? -eq 2 ] && ok "block-project-danger blocks: $c" || bad "block-project-danger blocks: $c"
 done
-for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config --get core.hooksPath"; do
+for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config --get core.hooksPath" \
+         "git -C $ROOT checkout -- docs/x.md" "git -C $ROOT checkout -- ./docs/x.md" "git -C $ROOT checkout -- .gitattributes" \
+         "git -C $ROOT push origin x" "git -C $ROOT status" "git -C $ROOT config core.hooksPath .githooks"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes: $c" || bad "block-project-danger passes: $c"
 done
 cp "$bak" "$ROOT/.harness/events.jsonl"; rm -f "$bak"
