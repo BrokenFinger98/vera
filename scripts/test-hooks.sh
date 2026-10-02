@@ -38,13 +38,16 @@ bak="$(mktemp)"; cp "$ROOT/.harness/events.jsonl" "$bak" 2>/dev/null || : > "$ba
 for c in "./gradlew flywayClean" "docker compose down -v" "psql -c 'drop schema vera cascade'" "git checkout -- ." "git push --force origin main" \
          "git push --no-verify origin main" "git config core.hooksPath /dev/null" "git config --unset core.hooksPath" "git -c core.hooksPath=/dev/null push origin main" \
          "git -C $ROOT checkout -- ." "git -C $ROOT restore ." "git -C $ROOT push --force origin x" "git -C $ROOT push -f origin x" \
-         "git checkout HEAD -- ." "git -C $ROOT restore --source=HEAD ." "git -C $ROOT push --no-verify origin x"; do
+         "git checkout HEAD -- ." "git -C $ROOT restore --source=HEAD ." "git -C $ROOT push --no-verify origin x" "git -C $ROOT restore --staged ." \
+         "git -C $ROOT reset --hard" "git -C $ROOT clean -fd" "git -C $ROOT clean --force" "git -C $ROOT push origin +x" \
+         "git -C $ROOT push -fu origin x" "git -C $ROOT push -uf origin x" "git config 'core.hooksPath' /dev/null" "git -c 'core.hooksPath=/dev/null' push origin x"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1
   [ $? -eq 2 ] && ok "block-project-danger blocks: $c" || bad "block-project-danger blocks: $c"
 done
 for c in "./scripts/check.sh" "git config core.hooksPath .githooks" "git config --get core.hooksPath" \
          "git -C $ROOT checkout -- docs/x.md" "git -C $ROOT checkout -- ./docs/x.md" "git -C $ROOT checkout -- .gitattributes" \
-         "git -C $ROOT push origin x" "git -C $ROOT status" "git -C $ROOT config core.hooksPath .githooks"; do
+         "git -C $ROOT push origin x" "git -C $ROOT status" "git -C $ROOT config core.hooksPath .githooks" \
+         "git -C $ROOT reset -q" "git -C $ROOT reset --soft HEAD~1" "git clean -n" "git push origin main"; do
   echo "{\"tool_input\":{\"command\":\"$c\"}}" | "$H/block-project-danger.sh" >/dev/null 2>&1 && ok "block-project-danger passes: $c" || bad "block-project-danger passes: $c"
 done
 cp "$bak" "$ROOT/.harness/events.jsonl"; rm -f "$bak"
