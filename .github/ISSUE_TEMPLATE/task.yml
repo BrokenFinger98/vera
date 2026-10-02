@@ -1,0 +1,50 @@
+name: Task
+description: One behaviour change, one PR, ≤400 lines. Filled by /ticket.
+labels: ["task"]
+body:
+  - type: input
+    id: goal
+    attributes:
+      label: Goal
+      description: One sentence, behaviour change from the user's point of view
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      value: |
+        - Spec:
+        - ADR:
+        - Owned module (Modulith module + Gradle project):
+        - Blocked by:   Blocks:
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria (EARS)
+      value: |
+        - WHEN <condition> THE SYSTEM SHALL <result>
+        - WHEN <error condition> THE SYSTEM SHALL <error response / log>
+    validations:
+      required: true
+  - type: textarea
+    id: nongoals
+    attributes:
+      label: Non-goals
+    validations:
+      required: true
+  - type: textarea
+    id: verify
+    attributes:
+      label: Verify (commands the agent must run)
+      value: |
+        - ./scripts/check.sh
+        - ./scripts/itest.sh
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks / Rollback

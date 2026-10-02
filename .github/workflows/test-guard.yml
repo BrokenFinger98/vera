@@ -1,0 +1,50 @@
+name: test-guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# base.sha is the base branch tip, not where the PR left it: both jobs diff from the merge-base,
+# so commits merged into main after the PR branched never count as changes of this PR.
+jobs:
+  label-required-when-tests-change:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require label test-change when test sources change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          BASE="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          changed="$(git diff --name-only "$BASE" "$HEAD_SHA" | grep -E 'src/(test|itest|archTest)/' || true)"
+          if [ -z "$changed" ]; then echo "no test sources changed"; exit 0; fi
+          labels="$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name')"
+          if echo "$labels" | grep -qx 'test-change'; then echo "label present"; exit 0; fi
+          echo "::error::Test sources changed but label 'test-change' is missing. Explain the test change in the PR and add the label."
+          echo "$changed"
+          exit 1
+
+  guards:
+    name: guards (constitution, fail-closed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The pre-push hook runs the same script; this required check also covers pushes that skipped the hook.
+      - name: Run scripts/guards.sh over the PR range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          BASE="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          scripts/guards.sh "$BASE" "$HEAD_SHA"

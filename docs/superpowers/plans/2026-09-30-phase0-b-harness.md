@@ -1439,11 +1439,11 @@ Reviewer / critic findings and disposition:
 ## Definition of Done
 - [ ] Every acceptance criterion in the issue has a test
 - [ ] `check.sh` and `itest.sh` output above, exit 0
-- [ ] Only the owned module changed (or split rationale below)
+- [ ] Only the owned module changed, plus the always-allowed files in CLAUDE.md (or split rationale below)
 - [ ] ≤ 400 changed lines, one behaviour change
-- [ ] Test changes explained; `Test-Change:` trailer if assertions changed; label `test-change` if `src/test|itest|archTest` touched
+- [ ] `Test-Change:` trailer if tests were deleted or assertions reduced; label `test-change` if `src/test|itest|archTest` touched
 - [ ] ADR / module spec updated, or "no decision made"
-- [ ] `.harness/state/progress.md` updated in this branch
+- [ ] `.harness/state/progress.md` updated in this branch (issue `#<n>`)
 - [ ] Rollback: <migration reversal or "plain revert suffices">
 - [ ] Owner design review: module boundaries · domain language · ADR needed? · migration reversible · no PII in logs
 ```
@@ -1469,7 +1469,7 @@ body:
       value: |
         - Spec:
         - ADR:
-        - Owned module:
+        - Owned module (Modulith module + Gradle project):
         - Blocked by:   Blocks:
     validations:
       required: true
@@ -1494,7 +1494,7 @@ body:
       label: Verify (commands the agent must run)
       value: |
         - ./scripts/check.sh
-        - ./scripts/itest.sh :<module>
+        - ./scripts/itest.sh
     validations:
       required: true
   - type: textarea
@@ -1509,7 +1509,7 @@ body:
 blank_issues_enabled: false
 ```
 
-- [ ] **Step 2: Write `test-guard.yml`**
+- [ ] **Step 2: Write `test-guard.yml` (test-change label, constitution guards as a required check)**
 
 ```yaml
 name: test-guard
@@ -1522,6 +1522,8 @@ permissions:
   contents: read
   pull-requests: read
 
+# base.sha is the base branch tip, not where the PR left it: both jobs diff from the merge-base,
+# so commits merged into main after the PR branched never count as changes of this PR.
 jobs:
   label-required-when-tests-change:
     runs-on: ubuntu-latest
@@ -1536,13 +1538,30 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E 'src/(test|itest|archTest)/' || true)"
+          BASE="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          changed="$(git diff --name-only "$BASE" "$HEAD_SHA" | grep -E 'src/(test|itest|archTest)/' || true)"
           if [ -z "$changed" ]; then echo "no test sources changed"; exit 0; fi
           labels="$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name')"
           if echo "$labels" | grep -qx 'test-change'; then echo "label present"; exit 0; fi
           echo "::error::Test sources changed but label 'test-change' is missing. Explain the test change in the PR and add the label."
           echo "$changed"
           exit 1
+
+  guards:
+    name: guards (constitution, fail-closed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The pre-push hook runs the same script; this required check also covers pushes that skipped the hook.
+      - name: Run scripts/guards.sh over the PR range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          BASE="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          scripts/guards.sh "$BASE" "$HEAD_SHA"
 ```
 
 - [ ] **Step 3: Write `claude-review.yml`**
@@ -1570,22 +1589,31 @@ jobs:
           fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # harness-improve opens its PRs as claude[bot]; the action fails runs started by bots it does not list.
+          allowed_bots: claude
           prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
             Review this pull request under the contract in REVIEW.md. Read CLAUDE.md for the immutable
-            decisions and the forbidden list, and the linked issue for the acceptance criteria.
-            Report only correctness, requirement, security and boundary findings, grouped by severity,
-            with path:line, one sentence each. End with "verdict: approve" or "verdict: request-changes".
-            Post the result as a pull request review.
-          claude_args: "--max-turns 20"
+            decisions and the forbidden list, and the linked issue for the acceptance criteria
+            ("Closes #<n>" in the PR body; read it with gh issue view <n>). Read the change with gh pr view
+            and gh pr diff. The action restores CLAUDE.md and .claude/ from the base branch before you start;
+            the PR's own versions are in the diff and under .claude-pr/.
+            Report only correctness, requirement, security and boundary findings.
+            Post each finding as an inline comment on its line with mcp__github_inline_comment__create_inline_comment:
+            the severity, then one sentence.
+            Then post ONE summary comment with gh pr comment: the findings grouped by severity, with path:line,
+            one sentence each, ending with the line "verdict: approve" or "verdict: request-changes".
+          claude_args: |
+            --max-turns 20
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue view:*)"
 ```
 
-Before committing, confirm the action's input names against its current `action.yml`:
+`allowed_bots: claude` lets the review run on the routine's PRs: harness-improve opens them as `claude[bot]`, and the action fails any run started by a bot it does not list (it compares names without the `[bot]` suffix).
 
-Run: `curl -s https://raw.githubusercontent.com/anthropics/claude-code-action/main/action.yml | grep -E '^  [a-z_]+:' | head -30`
-Expected: the list includes `prompt`, `anthropic_api_key` and `claude_args`. If names differ, adapt the `with:` block to the printed names and note it in progress.md.
-
-- [ ] **Step 4: Write `harness-improve.yml` (weekly promote, monthly prune — proposal PRs only)**
+- [ ] **Step 4: Write `harness-improve.yml` (weekly promote, monthly prune — proposal PRs and issues only)**
 
 ```yaml
 name: harness-improve
@@ -1604,6 +1632,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: read
+  actions: read
   id-token: write
 
 jobs:
@@ -1613,6 +1642,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # The repo's .claude/settings.json hooks run inside the action: the Stop gate runs check.sh on source changes.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v6
       - name: Decide mode
         id: mode
         env:
@@ -1625,39 +1660,74 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: "--max-turns 40"
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # gh runs on the action's GitHub App token; gh run list (CI failures) needs actions: read on it.
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(./scripts/check.sh),Bash(jq:*)"
+            --allowedTools "Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*)"
+            --allowedTools "Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+            --allowedTools "Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh issue create:*),Bash(gh issue list:*),Bash(gh run list:*)"
           prompt: |
             You run the Vera self-improvement loop (docs/superpowers/specs/2026-09-30-vera-dev-environment-design.md §10.1).
-            Mode: ${{ steps.mode.outputs.mode }}. You may open pull requests; you MUST NOT merge anything.
+            Mode: ${{ steps.mode.outputs.mode }}. You may open pull requests and issues; you MUST NOT merge anything.
 
             Read .harness/events.jsonl, docs/llm-wiki/wiki/concepts/lessons.md, CLAUDE.md, .claude/rules/*.md,
             config/detekt/detekt.yml, scripts/guards.sh, .claude/hooks/*.sh.
 
+            Proposal rules:
+              - Skip an item that already has an open PR or issue (gh pr list, gh issue list).
+              - Claude Code denies your writes under .claude/ in this run, so a proposal that touches .claude/rules/ or
+                .claude/hooks/ is ONE issue: label harness, title "harness: promote <slug>" (prune: "harness: prune <yyyymmdd>"),
+                body = the evidence and the exact patch as a fenced diff, applied later in a local ticket session.
+                Every other proposal is a pull request.
+              - A pull request gets its own branch from origin/main, named harness/promote-<slug> or harness/prune-<yyyymmdd>
+                (CLAUDE.md exempts these branches from the issue rule), label harness, plus test-change when it touches
+                src/test, src/itest or src/archTest.
+              - Every commit either changes a page under docs/llm-wiki/wiki/ other than concepts/lessons.md or carries the
+                trailer "Wiki-Skip: harness-improve proposal" (the pre-push gate checks this).
+              - Before committing a change to Kotlin, Gradle or detekt files, run ./scripts/check.sh and put its RESULT lines
+                in the PR body (the Stop gate does not cover committed changes).
+              - Write commit messages and PR and issue bodies to files under build/harness-improve/ (git ignores build/) and
+                pass them with git commit -F and --body-file. No AI attribution in commits, PRs or issues.
+
             If mode is promote:
               - Find lessons with count >= 3 and status open, and gate rules that fired >= 3 times for the same cause in the last 30 days.
-              - For EACH such item open exactly ONE pull request on a branch harness/promote-<slug> proposing exactly one of:
-                a CLAUDE.md line, a .claude/rules/<file>.md entry, a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test.
-                Cite the event lines and lesson entry in the PR body. Mark the lesson status: promoted (pending) in the same PR.
+              - For EACH such item open exactly ONE proposal for exactly one of: a CLAUDE.md line, a .claude/rules/<file>.md entry,
+                a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test. Cite the event lines and lesson entry, and mark
+                the lesson status: promoted (pending) in the same pull request or in the issue's patch.
               - If nothing qualifies, do nothing and print "promote: nothing due".
             If mode is prune:
               - List every rule, hook pattern and CLAUDE.md line that has zero related events in .harness/events.jsonl for the last 30 days
-                and is not marked "keep:" with a reason. Run /wiki-lint and /doctor-style checks on CLAUDE.md for derivable content.
-              - Open ONE pull request on branch harness/prune-<yyyymmdd> proposing the deletions, one bullet per item with the evidence
-                (no firing in 30 days). Never delete block-danger patterns for destructive commands.
+                and is not marked "keep:" with a reason. Run the checks in .claude/skills/wiki-lint/SKILL.md and check CLAUDE.md
+                for content derivable from code.
+              - Propose the deletions in ONE pull request on branch harness/prune-<yyyymmdd> (those under .claude/ in ONE issue),
+                one bullet per item with the evidence (no firing in 30 days). Never delete block-danger patterns for destructive commands.
               - Append a weekly metrics line to .harness/metrics.md (merged PRs, gate firings by rule, critic blocking count, CI failures)
-                computed from git log, events.jsonl and gh pr list --state merged.
+                computed from git log, events.jsonl, gh pr list --state merged and gh run list.
             Write in English. Keep each PR under 100 changed lines.
 ```
 
-- [ ] **Step 5: Add the API key secret and commit**
+Proposals that touch `.claude/rules/` or `.claude/hooks/` are issues because Claude Code never auto-approves writes under `.claude/` in the action's headless default mode: allow rules and `acceptEdits` leave them denied, only `bypassPermissions` would pass them, and the owner keeps that mode out of CI.
 
-Run: `gh secret set ANTHROPIC_API_KEY --repo BrokenFinger98/vera` (paste the key interactively — the owner does this step; the agent must never handle the key value).
-Expected: `✓ Set Actions secret ANTHROPIC_API_KEY`.
+Before committing, check the inputs both Claude workflows use against the action's current `action.yml`, then parse every template and workflow:
+
+Run: `curl -sL https://raw.githubusercontent.com/anthropics/claude-code-action/main/action.yml | grep -E '^  (prompt|claude_code_oauth_token|claude_args|additional_permissions|allowed_bots):'`
+Expected: five lines. If one is missing, adapt the `with:` blocks to the current input names and note it in progress.md.
+
+Run: `python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]; print("yaml ok")' .github/ISSUE_TEMPLATE/*.yml .github/workflows/*.yml`
+Expected: `yaml ok`.
+
+- [ ] **Step 5: Owner — install the Claude GitHub App and set the OAuth token secret; commit**
+
+The owner runs the setup and the agent never handles the token value. Install https://github.com/apps/claude on `BrokenFinger98/vera` (the action trades the job's OIDC token for the App's installation token), then run `claude setup-token` locally and `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo BrokenFinger98/vera`, pasting the token at the prompt.
+Expected: `gh secret list --repo BrokenFinger98/vera` lists `CLAUDE_CODE_OAUTH_TOKEN`. Neither Claude workflow runs on the PR that adds it: the action skips a workflow that is not on the default branch yet.
 
 ```bash
 git add .github
-git commit -m "ci: add test-change guard, Claude PR review and harness-improve routine; PR and issue templates"
+git commit -m "ci: add PR guards, Claude PR review and the harness-improve routine; PR and issue templates"
 ```
 
 ---

@@ -1,0 +1,92 @@
+name: harness-improve
+
+on:
+  schedule:
+    - cron: '0 21 * * 0'    # Monday 06:00 KST — weekly promotion pass
+    - cron: '0 22 1 * *'    # 1st of month 07:00 KST — monthly prune pass
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: promote | prune
+        default: promote
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+  actions: read
+  id-token: write
+
+jobs:
+  improve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The repo's .claude/settings.json hooks run inside the action: the Stop gate runs check.sh on source changes.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Decide mode
+        id: mode
+        env:
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          mode="promote"
+          [ "$SCHEDULE" = "0 22 1 * *" ] && mode="prune"
+          [ -n "$INPUT_MODE" ] && mode="$INPUT_MODE"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # gh runs on the action's GitHub App token; gh run list (CI failures) needs actions: read on it.
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(./scripts/check.sh),Bash(jq:*)"
+            --allowedTools "Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*)"
+            --allowedTools "Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+            --allowedTools "Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh issue create:*),Bash(gh issue list:*),Bash(gh run list:*)"
+          prompt: |
+            You run the Vera self-improvement loop (docs/superpowers/specs/2026-09-30-vera-dev-environment-design.md §10.1).
+            Mode: ${{ steps.mode.outputs.mode }}. You may open pull requests and issues; you MUST NOT merge anything.
+
+            Read .harness/events.jsonl, docs/llm-wiki/wiki/concepts/lessons.md, CLAUDE.md, .claude/rules/*.md,
+            config/detekt/detekt.yml, scripts/guards.sh, .claude/hooks/*.sh.
+
+            Proposal rules:
+              - Skip an item that already has an open PR or issue (gh pr list, gh issue list).
+              - Claude Code denies your writes under .claude/ in this run, so a proposal that touches .claude/rules/ or
+                .claude/hooks/ is ONE issue: label harness, title "harness: promote <slug>" (prune: "harness: prune <yyyymmdd>"),
+                body = the evidence and the exact patch as a fenced diff, applied later in a local ticket session.
+                Every other proposal is a pull request.
+              - A pull request gets its own branch from origin/main, named harness/promote-<slug> or harness/prune-<yyyymmdd>
+                (CLAUDE.md exempts these branches from the issue rule), label harness, plus test-change when it touches
+                src/test, src/itest or src/archTest.
+              - Every commit either changes a page under docs/llm-wiki/wiki/ other than concepts/lessons.md or carries the
+                trailer "Wiki-Skip: harness-improve proposal" (the pre-push gate checks this).
+              - Before committing a change to Kotlin, Gradle or detekt files, run ./scripts/check.sh and put its RESULT lines
+                in the PR body (the Stop gate does not cover committed changes).
+              - Write commit messages and PR and issue bodies to files under build/harness-improve/ (git ignores build/) and
+                pass them with git commit -F and --body-file. No AI attribution in commits, PRs or issues.
+
+            If mode is promote:
+              - Find lessons with count >= 3 and status open, and gate rules that fired >= 3 times for the same cause in the last 30 days.
+              - For EACH such item open exactly ONE proposal for exactly one of: a CLAUDE.md line, a .claude/rules/<file>.md entry,
+                a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test. Cite the event lines and lesson entry, and mark
+                the lesson status: promoted (pending) in the same pull request or in the issue's patch.
+              - If nothing qualifies, do nothing and print "promote: nothing due".
+            If mode is prune:
+              - List every rule, hook pattern and CLAUDE.md line that has zero related events in .harness/events.jsonl for the last 30 days
+                and is not marked "keep:" with a reason. Run the checks in .claude/skills/wiki-lint/SKILL.md and check CLAUDE.md
+                for content derivable from code.
+              - Propose the deletions in ONE pull request on branch harness/prune-<yyyymmdd> (those under .claude/ in ONE issue),
+                one bullet per item with the evidence (no firing in 30 days). Never delete block-danger patterns for destructive commands.
+              - Append a weekly metrics line to .harness/metrics.md (merged PRs, gate firings by rule, critic blocking count, CI failures)
+                computed from git log, events.jsonl, gh pr list --state merged and gh run list.
+            Write in English. Keep each PR under 100 changed lines.
