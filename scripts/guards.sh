@@ -33,86 +33,119 @@ commits="$(git -C "$ROOT" rev-list --reverse "$RANGE")" || die "git rev-list $RA
 changed="$(git -C "$ROOT" diff --name-only "$BASE" "$HEAD_")" || die "git diff $RANGE failed"
 messages="$(git -C "$ROOT" log --format=%B "$RANGE")" || die "git log $RANGE failed"
 
-# 1-2. Test weakening, judged per commit and per test source (ADR D10). Every commit of the range, merges included, must
-#    leave each test source (.kt or .java under src/{test,itest,archTest}/{kotlin,java}/) where it was, with as many
-#    assertions (assert…( .check( .verify() and test cases (@Test and its kin) as it was given and no new skip marker
-#    (@Disabled… @Enabled… @Ignore assume…() — unless that commit's own message carries 'Test-Change: <reason>' (a reason
-#    after the colon; 'Test-Change:' alone excuses nothing). A commit is given its parent's version; a merge what
-#    'git merge-file' makes of its parents' changes, or ours + theirs - base where that conflicts.
+# 1-2. Test weakening, judged per commit and per test source (ADR D10). Every commit of the range must leave each test
+#    source (.kt or .java under src/{test,itest,archTest}/{kotlin,java}/) where it was, with as many assertions
+#    (assert…( .check( .verify() and test cases (@Test and its kin) as it was given and no new skip marker
+#    (@Disabled… @Enabled… @Ignore assume…(), in any spelling — unless that commit's own message carries
+#    'Test-Change: <reason>' (a reason after the colon; 'Test-Change:' alone excuses nothing). A commit is given its
+#    parent's version; a merge what git merge-tree makes of its two parents, where a conflict hunk counts ours +
+#    theirs - base.
 TS='(^|/)src/(test|itest|archTest)/(kotlin|java)/.*[.](kt|java)$'
 EMPTY="$(git -C "$ROOT" hash-object -t tree /dev/null)" || die "git hash-object failed"
 TMP="$(mktemp -d)" || die "mktemp failed"; trap 'rm -rf "$TMP"' EXIT
-# SCAN prints "<assertions> <test cases> <skip markers>" of one file, counted after blanking comments (nested in Kotlin),
-# strings, raw strings, char literals and backtick names.
+# SCAN prints "<assertions> <test cases> <skip markers>" of one file, read twice: the first pass collects the Kotlin
+# aliases it declares (import … as Y, typealias Y = …), the second counts. It blanks comments (nested in Kotlin),
+# strings and raw strings (Kotlin templates ${…} stay code), char literals and backtick names other than plain
+# identifiers; reads annotations in any spelling (@ X, @[X Y], @field:X, @org.junit.X, split over lines); and counts
+# aliasing a skip marker as one.
 IFS= read -r -d '' SCAN <<'AWK'
+BEGIN { asserts = "assert[A-Za-z0-9_]*"; tests = "Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate|ArchTest"
+        skips = "(Disabled|Enabled)[A-Za-z0-9_]*|Ignore"; assumes = "assume[A-Za-z0-9_]*" }
 function hits(s, re, word,    k) {
   for (k = 0; match(s, re); s = substr(s, RSTART + RLENGTH))
     if (!word || RSTART == 1 || substr(s, RSTART - 1, 1) !~ /[A-Za-z0-9_]/) k++
   return k
 }
+function tpl(s, i,    n, d, ch) {   # s[i] starts a Kotlin template ${…}: the index after its closing brace
+  n = length(s); d = 1; i += 2
+  while (i <= n && d) { ch = substr(s, i, 1); if (ch == "\"") { i = skip(s, i, ch); continue } d += (ch == "{") - (ch == "}"); i++ }
+  return i
+}
+function skip(s, i, q,    n, ch) {   # s[i] opens a string or a backtick name q: the index after it
+  for (n = length(s); ++i <= n; ) {
+    ch = substr(s, i, 1)
+    if (ch == q) return i + 1
+    if (q == "`") continue
+    if (ch == "\\") i++
+    else if (kt && substr(s, i, 2) == "${") i = tpl(s, i) - 1
+  }
+  return i
+}
+function alias(name, as) {   # pass 1 records an alias; pass 2 counts one that names a skip marker
+  if (name ~ /^(Disabled|Enabled)/ || name == "Ignore") { if (pass == 1) skips = skips "|" as; else cs++ }
+  else if (name ~ /^assume/) { if (pass == 1) assumes = assumes "|" as; else cs++ }
+  else if (pass > 1) return
+  else if (name ~ /^(Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate|ArchTest)$/) tests = tests "|" as
+  else if (name ~ /^assert/) asserts = asserts "|" as
+}
+function norm(code,    x) {   # annotations in any spelling become @Name
+  gsub(/@[ \t]+/, "@", code); while (gsub(/@[A-Za-z_][A-Za-z0-9_]*[ \t]*[.:][ \t]*/, "@", code)) ;
+  while (match(code, /@\[[^]]*\]/)) { x = substr(code, RSTART + 2, RLENGTH - 3); gsub(/[^ \t]+/, "@&", x); code = substr(code, 1, RSTART - 1) " " x " " substr(code, RSTART + RLENGTH) }
+  while (gsub(/@[A-Za-z_][A-Za-z0-9_]*[ \t]*[.:][ \t]*/, "@", code)) ;
+  return code
+}
+function tally(code) {
+  code = code " "
+  ca += hits(code, "(" asserts ")[ \t]*[(<{]", 1) + hits(code, "\\.(check|verify)[ \t]*\\(", 0)
+  ct += hits(code, "@(" tests ")[^A-Za-z0-9_]", 0)
+  cs += hits(code, "@(" skips ")[^A-Za-z0-9_]", 0) + hits(code, "(" assumes ")[ \t]*\\(", 1)
+}
+FNR == 1 { pass++; depth = raw = 0; pend = "" }
 {
   line = $0; n = length(line); code = ""
   for (i = 1; i <= n; ) {
     two = substr(line, i, 2); c = substr(line, i, 1)
     if (depth) { if (two == "*/") { depth--; i += 2 } else if (kt && two == "/*") { depth++; i += 2 } else i++ }
-    else if (raw) { if (substr(line, i, 3) == "\"\"\"") { raw = 0; for (i += 3; substr(line, i, 1) == "\""; ) i++ } else i++ }
+    else if (raw) { if (substr(line, i, 3) == "\"\"\"") { raw = 0; for (i += 3; substr(line, i, 1) == "\""; ) i++ } else if (kt && two == "${") i = tpl(line, i); else i++ }
     else if (two == "//") break
     else if (two == "/*") { depth = 1; i += 2; code = code " " }
     else if (substr(line, i, 3) == "\"\"\"") { raw = 1; i += 3; code = code " " }
-    else if (c == "\"" || c == "\047" || c == "`") {
-      for (i++; i <= n && substr(line, i, 1) != c; i++) if (c != "`" && substr(line, i, 1) == "\\") i++
-      i++; code = code " "
-    } else { code = code c; i++ }
+    else if (c == "\"") { i = skip(line, i, c); code = code " " }
+    else if (c == "`") { j = skip(line, i, c); x = substr(line, i + 1, j - i - 2); code = code ((x ~ /^[A-Za-z_][A-Za-z0-9_]*$/) ? x : " "); i = j }
+    else if (c == "'" && match(substr(line, i, 9), /^'(\\u[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]|\\.|[^'\\])'/)) { i += RLENGTH; code = code " " }
+    else { code = code c; i++ }
   }
-  code = code " "
-  a += hits(code, "assert[A-Za-z0-9_]*[ \t]*[(<{]", 1) + hits(code, "\\.(check|verify)[ \t]*\\(", 0)
-  t += hits(code, "@(Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate|ArchTest)[^A-Za-z0-9_]", 0)
-  s += hits(code, "@(Disabled|Enabled)[A-Za-z0-9_]*|@Ignore[^A-Za-z0-9_]", 0) + hits(code, "assume[A-Za-z0-9_]*[ \t]*\\(", 1)
+  if (pend != "") code = pend " " code   # an annotation that ends a line is read with the next one
+  pend = ""; if (match(code, /@[ \t]*([A-Za-z_][A-Za-z0-9_]*([ \t]*[.:][ \t]*[A-Za-z_][A-Za-z0-9_]*)*[ \t]*[.:]?)?[ \t]*$/)) { pend = substr(code, RSTART); code = substr(code, 1, RSTART - 1) }
+  code = norm(code); x = code; sub(/^[ \t]+/, "", x); sub(/[ \t;]+$/, "", x); m = split(x, w, /[ \t.=;]+/)
+  if (w[1] == "import" && m > 3 && w[m - 1] == "as") alias(w[m - 2], w[m]); else if (w[1] == "typealias" && m > 2) alias(w[m], w[2])
+  if (pass > 1) tally(code)
 }
-END { print a + 0, t + 0, s + 0 }
+END { if (pend != "") tally(norm(pend)); print ca + 0, ct + 0, cs + 0 }
 AWK
-# JOIN reads the diffs of one commit against each parent (tag 1..k) and, for a merge, against the merge base (tag 0).
-# It prints "F <path> <blob> <given blob>..." per test source the commit changes (the base's version first for a merge,
-# '-' = absent) and "D <path> <old blob> <new path or ->" per test source it drops that no other parent deleted.
+# JOIN turns the diff of a commit against what it was given into "F <path> <blob> <given blob or -> <given path>" per
+# test source it changes and "D <path> <old blob> <new path or -> <path>" per test source it drops or moves out.
 IFS= read -r -d '' JOIN <<'AWK'
 BEGIN { FS = OFS = "\t" }
-$2 != "D" && $4 ~ ts { from[$1, $4] = ($2 == "A" || $3 !~ ts) ? "-" : $5; if ($1) now[$4] = $6 }
-($2 == "D" || $2 == "R") && $3 ~ ts { had[$1, $3] = $5; if ($1 && ($2 == "D" || $4 !~ ts)) out[$3] = ($2 == "D") ? "-" : $4 }
-END {
-  for (f in now) { r = "F" OFS f OFS now[f]; for (t = (k > 1) ? 0 : 1; t <= k; t++) r = r OFS (((t, f) in from) ? from[t, f] : now[f]); print r }
-  for (g in out) {
-    kept = 1; if (k > 1 && ((0, g) in had)) for (t = 1; t <= k; t++) if (!((t, g) in had)) kept = 0
-    for (t = 1; kept && t <= k; t++) if ((t, g) in had) { print "D", g, had[t, g], out[g]; kept = 0 }
-  }
-}
+$1 != "D" && $3 ~ ts { print "F", $3, $5, (($1 == "A" || $2 !~ ts) ? "-" : $4), $2 }
+($1 == "D" || $1 == "R" && $3 !~ ts) && $2 ~ ts { print "D", $2, $4, (($1 == "D") ? "-" : $3), $2 }
 AWK
-# entries <tag> <from> <to>: the rename-aware diff, one tab-separated line per path: tag, status, old path, new path,
-# old blob, new blob
+# UNMARK splits a file merge-tree left conflicted (zdiff3 markers, CRLF too) into whole ours, base and theirs versions
+UNMARK='{ l = $0; sub(/\r$/, "", l) }
+substr(l, 1, 8) == "<<<<<<< " { sec = 1; next }
+substr(l, 1, 8) == "||||||| " { sec = 2; next }
+l == "=======" && sec { sec = 3; next }
+substr(l, 1, 8) == ">>>>>>> " { sec = 0; next }
+sec != 2 && sec != 3 { print > ours }
+sec != 1 && sec != 3 { print > base }
+sec != 1 && sec != 2 { print > theirs }'
+# entries <from> <to>: the rename-aware diff, one tab-separated line per path: status, old path, new path, old blob, new blob
 entries() {
-  local tag="$1"
-  git -C "$ROOT" diff-tree -r -M -z --no-abbrev "$2" "$3" | while IFS= read -r -d '' meta && IFS= read -r -d '' p; do
+  git -C "$ROOT" diff-tree -r -M -z --no-abbrev "$1" "$2" | while IFS= read -r -d '' meta && IFS= read -r -d '' p; do
     q="$p"; case "$meta" in *' R'*) IFS= read -r -d '' q ;; esac
-    set -- $meta; printf '%s\t%.1s\t%s\t%s\t%s\t%s\n' "$tag" "$5" "$p" "$q" "$3" "$4"
+    case "$p$q" in *$'\t'*|*$'\n'*) die "a path holds a tab or a newline, rename it: $p" ;; esac
+    set -- $meta; printf '%.1s\t%s\t%s\t%s\t%s\n' "$5" "$p" "$q" "$3" "$4"
   done
 }
-blob() { if [ "$1" = - ]; then : > "$2"; else git -C "$ROOT" cat-file blob "$1" > "$2" || die "cannot read $3 (blob $1) of commit $c"; fi; }
-count() {   # count <file> <path>: sets A N S
+blob() { if [ "$1" = - ]; then : > "$2"; else git -C "$ROOT" cat-file blob "$1" > "$2" || die "cannot read $3 (blob $1) of $where"; fi; }
+count() {   # count <file> <path>: sets A N S, the language following <path>
   local kt=0; case "$2" in *.kt) kt=1 ;; esac
-  LC_ALL=C awk -v kt="$kt" "$SCAN" "$1" > "$TMP/n" || die "cannot count $2 of commit $c"; read -r A N S < "$TMP/n"
+  LC_ALL=C awk -v kt="$kt" "$SCAN" "$1" "$1" > "$TMP/n" || die "cannot count $2 of $where"; read -r A N S < "$TMP/n"
 }
-# expect <path> <blob>...: sets EA EN ES, the counts <path> must keep. One blob: the parent's version. The base's, then
-# each parent's: their merge-file result, or ours + theirs - base when merge-file conflicts.
-expect() {
-  local f="$1" k=$(($# - 2)) p first=1 clean=1; shift
-  blob "$1" "$TMP/base" "$f"; count "$TMP/base" "$f"; EA=$A EN=$N ES=$S; shift
-  [ "$k" -eq 0 ] && return
-  EA=$((EA * (1 - k))) EN=$((EN * (1 - k))) ES=$((ES * (1 - k)))
-  for p in "$@"; do
-    blob "$p" "$TMP/other" "$f"; count "$TMP/other" "$f"; EA=$((EA + A)) EN=$((EN + N)) ES=$((ES + S))
-    if [ "$first" -eq 1 ]; then cp "$TMP/other" "$TMP/acc"; first=0; continue; fi
-    git -C "$ROOT" merge-file -q "$TMP/acc" "$TMP/base" "$TMP/other" >/dev/null 2>&1 || clean=0
-  done
-  [ "$clean" -eq 1 ] && { count "$TMP/acc" "$f"; EA=$A EN=$N ES=$S; }
+# side_deleted <path>: the merge base holds <path> and a parent does not — one side deleted it, so may the merge
+side_deleted() {
+  [ -n "$mb" ] && git -C "$ROOT" cat-file -e "$mb:$1" 2>/dev/null \
+    && { ! git -C "$ROOT" cat-file -e "$P1:$1" 2>/dev/null || ! git -C "$ROOT" cat-file -e "$P2:$1" 2>/dev/null; }
 }
 weakened() {   # weakened <rule> <what>: a violation, or a note when the commit carries the trailer
   if [ "$excused" -eq 1 ]; then echo "  ($where carries Test-Change: accepted $1, $2)"; return; fi
@@ -122,21 +155,29 @@ for c in $commits; do
   parents="$(git -C "$ROOT" rev-list --parents -n 1 "$c")" && msg="$(git -C "$ROOT" log -1 --format=%B "$c")" \
     && where="$(git -C "$ROOT" log -1 --format='%h "%s"' "$c")" || die "cannot read commit $c"
   excused=0; printf '%s\n' "$msg" | grep -E '^Test-Change:[[:space:]]*[^[:space:]]' >/dev/null && excused=1
-  set -- ${parents#"$c"}; [ $# -eq 0 ] && set -- "$EMPTY"   # a root commit is compared with the empty tree
-  t=0; : > "$TMP/e"
-  for p in "$@"; do t=$((t + 1)); entries "$t" "$p" "$c" >> "$TMP/e" || die "cannot diff commit $c against $p"; done
-  if [ $# -gt 1 ]; then
-    base="$(git -C "$ROOT" merge-base --octopus "$@")" || base="$EMPTY"
-    entries 0 "$base" "$c" >> "$TMP/e" || die "cannot diff commit $c against $base"
+  set -- ${parents#"$c"}; given="${1:-$EMPTY}"; : > "$TMP/conflicted"   # a root commit is given the empty tree
+  [ $# -le 2 ] || die "$where merges $# parents; guards judge two at most: merge one branch at a time"
+  if [ $# -eq 2 ]; then   # in-tree .gitattributes (a merge driver) must not shape the merge it is judged against
+    P1="$1" P2="$2"; mb="$(git -C "$ROOT" merge-base "$1" "$2")" || mb=""
+    git --attr-source="$EMPTY" -C "$ROOT" -c merge.conflictStyle=zdiff3 merge-tree --write-tree --allow-unrelated-histories -z --name-only "$1" "$2" > "$TMP/mt"
+    [ $? -le 1 ] || die "cannot merge the parents of $where again"
+    { IFS= read -r -d '' given; while IFS= read -r -d '' p && [ -n "$p" ]; do printf '%s\n' "$p"; done; } < "$TMP/mt" > "$TMP/conflicted"
   fi
-  LC_ALL=C awk -v k=$# -v ts="$TS" "$JOIN" "$TMP/e" | LC_ALL=C sort > "$TMP/r" || die "cannot judge commit $c"
-  while IFS=$'\t' read -r kind f b rest <&3; do
-    blob "$b" "$TMP/x" "$f"; count "$TMP/x" "$f"
+  entries "$given" "$c" | LC_ALL=C awk -v ts="$TS" "$JOIN" | LC_ALL=C sort > "$TMP/r" || die "cannot diff $where"
+  while IFS=$'\t' read -r kind f b g src <&3; do
+    blob "$b" "$TMP/x" "$f"; count "$TMP/x" "$f"; a=$A n=$N s=$S
     if [ "$kind" = D ]; then
-      [ "$rest" = - ] && rest=deleted || rest="moved out of the test sources to $rest"
-      weakened deleted-test-file "$f $rest (assertions $A → 0, test cases $N → 0)"; continue
+      [ $# -eq 2 ] && side_deleted "$f" && continue   # a modify/delete conflict, resolved the deleting side's way
+      [ "$g" = - ] && g=deleted || g="moved out of the test sources to $g"
+      weakened deleted-test-file "$f $g (assertions $a → 0, test cases $n → 0)"; continue
     fi
-    a=$A n=$N s=$S; expect "$f" $rest
+    blob "$g" "$TMP/p" "$src"; count "$TMP/p" "$src"; EA=$A EN=$N ES=$S
+    if grep -Fx -- "$src" "$TMP/conflicted" >/dev/null; then   # conflicted: ours + theirs - base, each a whole file
+      : > "$TMP/o"; : > "$TMP/b"; : > "$TMP/t"
+      LC_ALL=C awk -v ours="$TMP/o" -v base="$TMP/b" -v theirs="$TMP/t" "$UNMARK" "$TMP/p" || die "cannot split $src of $where"
+      count "$TMP/o" "$src"; EA=$A EN=$N ES=$S; count "$TMP/t" "$src"; EA=$((EA + A)) EN=$((EN + N)) ES=$((ES + S))
+      count "$TMP/b" "$src"; EA=$((EA - A)) EN=$((EN - N)) ES=$((ES - S))
+    fi
     [ "$a" -lt "$EA" ] && weakened assertion-decrease "$f assertions $EA → $a"
     [ "$n" -lt "$EN" ] && weakened test-case-decrease "$f test cases $EN → $n"
     [ "$s" -gt "$ES" ] && weakened test-disabled "$f skip markers $ES → $s"

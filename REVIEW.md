@@ -18,7 +18,8 @@ immutable decision in `CLAUDE.md`**. Style is owned by ktfmt and detekt — neve
 1. Every `WHEN … THE SYSTEM SHALL …` line in the linked issue has a test.
 2. `git diff --stat` shows only the ticket's owned module plus the always-allowed files in CLAUDE.md; no unrelated files.
 3. No test weakened in a way that keeps the counts: a new expected value, a looser matcher, a longer time budget, fewer
-   `@ValueSource` values. The push guard already refuses, per commit and per file, fewer assertions or test cases, a new
+   `@ValueSource` values, a skip marker moved to a wider scope or given another condition, a test moved where Gradle
+   does not build it. The push guard already refuses, per commit and per file, fewer assertions or test cases, a new
    skip marker and a deleted or moved-out test without that commit's `Test-Change:` trailer (`scripts/guards.sh`).
 4. New tables/columns come with a new `V<timestamp>__*.sql`, never an edited one.
 5. Logs and error messages contain no PII, secrets or customer identifiers.
