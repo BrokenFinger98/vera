@@ -39,12 +39,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          fetch-depth: 0    # full history: a shallow clone has no merge-base, and guards.sh reads an empty range as a pass
       # The pre-push hook runs the same script; this required check also covers pushes that skipped the hook.
-      - name: Run scripts/guards.sh over the PR range
+      # It runs the base commit's copy, so a PR that weakens scripts/guards.sh cannot pass its own check.
+      - name: Run the base commit's scripts/guards.sh over the PR range
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           BASE="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
-          scripts/guards.sh "$BASE" "$HEAD_SHA"
+          guards="$RUNNER_TEMP/guards.sh"
+          if ! git show "$BASE:scripts/guards.sh" > "$guards" 2>/dev/null; then
+            echo "::notice::The base commit has no scripts/guards.sh; running the PR's own copy."
+            guards=scripts/guards.sh
+          fi
+          bash "$guards" "$BASE" "$HEAD_SHA"

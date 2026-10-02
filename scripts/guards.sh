@@ -4,7 +4,7 @@
 set -uo pipefail
 # Check pipelines end in a reader that consumes all input (grep ... >/dev/null, never grep -q): under pipefail an early
 # exit kills the writer with SIGPIPE on a large diff or log, and a match would read as a miss.
-ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || git rev-parse --show-toplevel)"
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
 BASE="${1:-origin/main}"; HEAD_="${2:-HEAD}"
 git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null || BASE="$(git -C "$ROOT" rev-list --max-parents=0 "$HEAD_" | tail -1)"

@@ -1197,7 +1197,7 @@ git commit -m "docs: add repo-local LLM wiki schema, index, counted lessons and 
 set -uo pipefail
 # Check pipelines end in a reader that consumes all input (grep ... >/dev/null, never grep -q): under pipefail an early
 # exit kills the writer with SIGPIPE on a large diff or log, and a match would read as a miss.
-ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || git rev-parse --show-toplevel)"
 LOG="$ROOT/.claude/hooks/log-gate-event.sh"
 BASE="${1:-origin/main}"; HEAD_="${2:-HEAD}"
 git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null || BASE="$(git -C "$ROOT" rev-list --max-parents=0 "$HEAD_" | tail -1)"
@@ -1553,16 +1553,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          fetch-depth: 0    # full history: a shallow clone has no merge-base, and guards.sh reads an empty range as a pass
       # The pre-push hook runs the same script; this required check also covers pushes that skipped the hook.
-      - name: Run scripts/guards.sh over the PR range
+      # It runs the base commit's copy, so a PR that weakens scripts/guards.sh cannot pass its own check.
+      - name: Run the base commit's scripts/guards.sh over the PR range
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           BASE="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
-          scripts/guards.sh "$BASE" "$HEAD_SHA"
+          guards="$RUNNER_TEMP/guards.sh"
+          if ! git show "$BASE:scripts/guards.sh" > "$guards" 2>/dev/null; then
+            echo "::notice::The base commit has no scripts/guards.sh; running the PR's own copy."
+            guards=scripts/guards.sh
+          fi
+          bash "$guards" "$BASE" "$HEAD_SHA"
 ```
+
+The guards job runs the merge-base's copy of `scripts/guards.sh` from `$RUNNER_TEMP`, so a PR that weakens the script cannot pass its own required check; only the PR that introduces the script, whose base has none, runs its own copy.
 
 - [ ] **Step 3: Write `claude-review.yml`**
 
