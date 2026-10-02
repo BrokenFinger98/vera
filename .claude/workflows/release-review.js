@@ -11,8 +11,8 @@ const FILE_FINDINGS = {
 }
 
 const files = (args && args.files) || []
-if (files.length === 0) {
-  return { error: 'Pass args.files: output of `git diff --name-only $(git describe --tags --abbrev=0)..HEAD -- "*.kt" "*.sql"`' }
+if (!Array.isArray(files) || files.length === 0) {
+  return { error: 'Pass args.files as a JSON array of paths, e.g. the lines of `git diff --name-only $(git describe --tags --abbrev=0)..HEAD -- "*.kt" "*.sql"`' }
 }
 
 const perFile = await parallel(files.map((file) => () =>

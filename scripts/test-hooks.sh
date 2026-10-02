@@ -33,6 +33,8 @@ keep="RESULT check exit=1 seconds=3; git restore --source=HEAD x; git -c core.ho
 "$H/log-gate-event.sh" test-gate non-ascii "$(printf 'caf\xc3\xa9 \xff')"
 last | jq -e '.detail == "caf\u00e9 \ufffd"' >/dev/null && ! last | LC_ALL=C grep '[^ -~]' >/dev/null \
   && ok "log-gate-event escapes non-ASCII and invalid UTF-8" || bad "log-gate-event escapes non-ASCII and invalid UTF-8"
+"$H/log-gate-event.sh" test-gate home "cat $HOME/x; PGPASSWORD=$HOME/y"
+[ "$(last | jq -r .detail)" = "cat <home>/x; PGPASSWORD=***" ] && ok "log-gate-event writes \$HOME as <home>" || bad "log-gate-event writes \$HOME as <home>"
 
 # Without VERA_EVENTS_FILE every worktree logs to one untracked file in the git common dir; detached HEAD logs 'detached'
 F="$T/repo"; fixture "$F"
@@ -131,6 +133,13 @@ out="$("$P/scripts/guards.sh" no-such-ref HEAD 2>&1)"
 [ $? -eq 2 ] && printf '%s' "$out" | grep 'git fetch origin main' >/dev/null && ok "guards: a ref that does not resolve is exit 2" || bad "guards: a ref that does not resolve is exit 2"
 mkdir -p "$T/nogit" && cp "$P/scripts/guards.sh" "$T/nogit/" && out="$(cd "$T/nogit" && ./guards.sh 2>&1)"
 [ $? -eq 2 ] && printf '%s' "$out" | grep 'not inside a git checkout' >/dev/null && ok "guards: outside a checkout is exit 2" || bad "guards: outside a checkout is exit 2"
+# A branch behind main is judged from the merge-base: a test main gained after the fork is not "deleted" by the branch
+B="$T/behind"; fixture "$B"; git -C "$B" switch -q -c feature && printf 'x\n' > "$B/notes.txt" && commit_in "$B" "docs: notes"
+git -C "$B" switch -q main && mkdir -p "$B/m/src/test/kotlin" && printf 'class N { fun n() = assertThat(1) }\n' > "$B/m/src/test/kotlin/N.kt" \
+  && commit_in "$B" "test: N" && git -C "$B" update-ref refs/remotes/origin/main main
+n="$(wc -l < "$VERA_EVENTS_FILE")"
+"$B/scripts/guards.sh" origin/main feature >/dev/null 2>&1 && [ "$(wc -l < "$VERA_EVENTS_FILE")" = "$n" ] \
+  && ok "guards: a branch behind main is judged from the merge-base" || bad "guards: a branch behind main is judged from the merge-base"
 mkdir -p "$P/m/src/main/kotlin" && printf '*.kt -diff\n' > "$P/.gitattributes" && printf '@Suppress("X")\nclass A\n' > "$P/m/src/main/kotlin/A.kt"
 commit_in "$P" "feat: a suppression behind -diff"
 guards_last | grep 'new suppression' >/dev/null && ok "guards: '*.kt -diff' hides no added line" || bad "guards: '*.kt -diff' hides no added line"
@@ -149,6 +158,10 @@ printf 'jamo %s\n' "$(printf '\xe1\x84\x80')" > "$P/j2.md" && commit_in "$P" "do
 guards_last | grep 'Korean text added' >/dev/null && ok "guards: Hangul Jamo are Korean" || bad "guards: Hangul Jamo are Korean"
 printf 'ok\n' > "$P/j3.md" && commit_in "$P" "docs: $(printf '\xed\x95\x9c')"
 guards_last | grep 'Korean text in a commit message' >/dev/null && ok "guards: Korean in a commit message" || bad "guards: Korean in a commit message"
+n="$(wc -l < "$VERA_EVENTS_FILE")"; printf '#!/usr/bin/env bash\necho "$*" >> "$GUARDS_OUT"\n' > "$T/logger" && chmod +x "$T/logger"
+GUARDS_OUT="$T/logger.out" GUARDS_LOGGER="$T/logger" "$P/scripts/guards.sh" HEAD~1 HEAD >/dev/null 2>&1
+grep '^pre-push-guard non-english' "$T/logger.out" >/dev/null && [ "$(wc -l < "$VERA_EVENTS_FILE")" = "$n" ] \
+  && ok "guards: GUARDS_LOGGER replaces the event logger" || bad "guards: GUARDS_LOGGER replaces the event logger"
 git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/main >/dev/null 2>&1
 [ $? -ne 0 ] && last | jq -e '.rule=="push-to-main"' >/dev/null && ok "pre-push refuses a push to main" || bad "pre-push refuses a push to main"
 git -C "$P" update-ref refs/remotes/origin/main HEAD
@@ -157,6 +170,13 @@ git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1
 [ $? -ne 0 ] && last | jq -e '.rule=="blocked-no-wiki-change"' >/dev/null && ok "pre-push: 'Wiki-Skip:' without a reason does not pass" || bad "pre-push: 'Wiki-Skip:' without a reason does not pass"
 git -C "$P" commit -q --amend -m $'chore: touch scripts\n\nWiki-Skip: probe, nothing decided'
 git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1 && ok "pre-push: 'Wiki-Skip: <reason>' passes" || bad "pre-push: 'Wiki-Skip: <reason>' passes"
+# The wiki gate also covers CI, the review contract, detekt config and the root build (neither ADR nor trailer here)
+for f in .github/workflows/x.yml REVIEW.md config/detekt/x.yml settings.gradle.kts gradle/x.toml; do
+  git -C "$P" switch -q -C wiki-gate refs/remotes/origin/main && mkdir -p "$P/$(dirname "$f")" && printf 'x\n' > "$P/$f" && commit_in "$P" "chore: touch $f"
+  git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/wiki-gate >/dev/null 2>&1
+  [ $? -ne 0 ] && last | jq -e '.rule=="blocked-no-wiki-change"' >/dev/null && ok "pre-push wiki gate covers $f" || bad "pre-push wiki gate covers $f"
+done
+git -C "$P" switch -q main
 git -C "$P" worktree add -q "$T/pwt" -b wt-guards && printf '@Suppress("Y")\nclass B\n' > "$T/pwt/m/src/main/kotlin/B.kt" && commit_in "$T/pwt" "feat: B"
 git -C "$T/pwt" push -q "$T/remote.git" HEAD:refs/heads/wt-guards >/dev/null 2>&1
 [ $? -ne 0 ] && jq -s -e 'map(select(.branch=="wt-guards" and .rule=="new-suppress")) | length == 1' "$VERA_EVENTS_FILE" >/dev/null \

@@ -12,7 +12,8 @@ permissions:
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false
+    # A fork PR gets no id-token for the action, so the job could only fail there.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# guards.sh [<base> <head>] — constitution guards over a commit range (default origin/main..HEAD). Fail-closed.
-# Exit 0 = pass, 1 = violation, 2 = cannot judge (not a checkout, a ref that does not resolve, a failing git command).
-# Each failure prints WHAT is wrong and HOW to fix it (the message is an instruction to the agent).
+# guards.sh [<base> <head>] — constitution guards over what <head> adds since it left <base> (default origin/main..HEAD):
+# diffs start at their merge-base, so files main gained after the fork never read as deleted. Fail-closed.
+# Exit 0 = pass, 1 = violation, 2 = cannot judge (not a checkout, a ref that does not resolve or shares no history with
+# the other, a failing git command). Each failure prints WHAT is wrong and HOW to fix it (an instruction to the agent).
 set -uo pipefail
 # Check pipelines end in a reader that consumes all input (grep ... >/dev/null, never grep -q): under pipefail an early
 # exit kills the writer with SIGPIPE on a large diff or log, and a match would read as a miss.
@@ -10,14 +11,16 @@ set -uo pipefail
 # 'git -C <dir> rev-parse --show-toplevel' answers <dir> itself, so the event log path would point nowhere.
 ROOT="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null)" \
   || { echo "guards: not inside a git checkout" >&2; exit 2; }
-LOG="$ROOT/.claude/hooks/log-gate-event.sh"
+# GUARDS_LOGGER replaces the event logger: CI sets it to 'true', so the checkout's hook script (PR code) never runs there.
+LOG="${GUARDS_LOGGER:-$ROOT/.claude/hooks/log-gate-event.sh}"
 die() { echo "guards: $1" >&2; exit 2; }
 BASE="${1:-refs/remotes/origin/main}"; HEAD_="${2:-HEAD}"
 # No fallback base: the root commit made the range all of history and blamed files nobody touched.
 for ref in "$BASE" "$HEAD_"; do
   git -C "$ROOT" rev-parse --verify -q "$ref^{commit}" >/dev/null || die "cannot resolve '$ref' — run: git fetch origin main"
 done
-RANGE="$BASE..$HEAD_"
+RANGE="$BASE..$HEAD_"   # as given, for messages and git log (a log range already stops where the two histories meet)
+BASE="$(git -C "$ROOT" merge-base "$BASE" "$HEAD_")" || die "$RANGE has no merge-base — run: git fetch origin main"
 fail=0
 violation() { echo "✖ $1"; echo "  → $2"; "$LOG" pre-push-guard "$3" "$1"; fail=1; }
 # Content diffs are raw text whatever the repository says: a PR's '.gitattributes' with '*.kt -diff' (or a textconv,

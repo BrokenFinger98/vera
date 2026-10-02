@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fast quality gate: formatting, detekt, unit tests, architecture tests. No Docker.
-# Callers: Stop hook (.claude/hooks/stop-gate.sh), pre-push gate, CI. Exit 0 means "safe to stop".
+# Callers: Stop hook (.claude/hooks/stop-gate.sh) and CI. Exit 0 means "safe to stop".
 # Exit codes: 0 ok · 1 Gradle failure · 2 environment (not a repo, not bash, bad arguments) · 3 Docker unavailable.
 . "$(dirname "$0")/lib.sh"
 [ $# -eq 0 ] || { echo "check.sh takes no arguments; use ./scripts/test.sh :module:path to scope tests." >&2; exit 2; }

@@ -53,4 +53,5 @@ jobs:
             echo "::notice::The base commit has no scripts/guards.sh; running the PR's own copy."
             guards=scripts/guards.sh
           fi
-          bash "$guards" "$BASE" "$HEAD_SHA"
+          # The checkout's .claude/hooks/log-gate-event.sh is PR code; GUARDS_LOGGER=true makes event logging a no-op.
+          GUARDS_LOGGER=true bash "$guards" "$BASE" "$HEAD_SHA"

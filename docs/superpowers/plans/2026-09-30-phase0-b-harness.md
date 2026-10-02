@@ -390,16 +390,20 @@ Five hooks. `log-gate-event.sh` is called by the other hooks, by `.githooks/pre-
 # The only writer of that log (spec §10.1 Capture); scripts/publish-events.sh copies it into .harness/events.jsonl.
 # gate  : block-danger | stop-gate | pre-push-guard | wiki-gate | critic | ci
 # rule  : short machine name, e.g. "deleted-test-file", "check.sh-failed", "force-push"
-# detail: free text; secret-looking assignments are masked (below), then cut to 300 bytes; jq -a escapes non-ASCII
+# detail: free text; $HOME becomes <home> and secret-looking assignments are masked (below), then it is cut to
+#         300 bytes; jq -a escapes non-ASCII
 set -uo pipefail
 export LC_ALL=C   # bytes, not characters: invalid UTF-8 in a detail must not stop tr, sed or cut
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ $# -ge 2 ] || exit 0
 gate="$1"; rule="$2"; shift 2
+# Commands carry absolute paths (CLAUDE.md) and events end up in a public repository: $HOME becomes <home> first.
+raw="$*"
+case "${HOME:-}" in ""|/) ;; *) raw="${raw//"$HOME"/<home>}" ;; esac
 # A NAME=value or --long-option=value whose name holds one of these words, in any case (PGPASSWORD, GH_TOKEN,
 # aws_secret_access_key, --api-key), keeps only NAME=***; every other assignment (exit=1, --source=HEAD) stays readable.
 SENSITIVE='(pass|pwd|secret|token|key|auth|cred|session|cookie)'
-detail="$(printf '%s' "$*" | tr '\n' ' ' \
+detail="$(printf '%s' "$raw" | tr '\n' ' ' \
   | sed -E -e "s/(--[A-Za-z0-9-]*${SENSITIVE}[A-Za-z0-9-]*)=[^[:space:]]+/\1=***/gI" \
            -e "s/([A-Za-z0-9_]*${SENSITIVE}[A-Za-z0-9_]*)=[^[:space:]]+/\1=***/gI" \
   | cut -c1-300)"
@@ -695,6 +699,8 @@ keep="RESULT check exit=1 seconds=3; git restore --source=HEAD x; git -c core.ho
 "$H/log-gate-event.sh" test-gate non-ascii "$(printf 'caf\xc3\xa9 \xff')"
 last | jq -e '.detail == "caf\u00e9 \ufffd"' >/dev/null && ! last | LC_ALL=C grep '[^ -~]' >/dev/null \
   && ok "log-gate-event escapes non-ASCII and invalid UTF-8" || bad "log-gate-event escapes non-ASCII and invalid UTF-8"
+"$H/log-gate-event.sh" test-gate home "cat $HOME/x; PGPASSWORD=$HOME/y"
+[ "$(last | jq -r .detail)" = "cat <home>/x; PGPASSWORD=***" ] && ok "log-gate-event writes \$HOME as <home>" || bad "log-gate-event writes \$HOME as <home>"
 
 # Without VERA_EVENTS_FILE every worktree logs to one untracked file in the git common dir; detached HEAD logs 'detached'
 F="$T/repo"; fixture "$F"
@@ -793,6 +799,13 @@ out="$("$P/scripts/guards.sh" no-such-ref HEAD 2>&1)"
 [ $? -eq 2 ] && printf '%s' "$out" | grep 'git fetch origin main' >/dev/null && ok "guards: a ref that does not resolve is exit 2" || bad "guards: a ref that does not resolve is exit 2"
 mkdir -p "$T/nogit" && cp "$P/scripts/guards.sh" "$T/nogit/" && out="$(cd "$T/nogit" && ./guards.sh 2>&1)"
 [ $? -eq 2 ] && printf '%s' "$out" | grep 'not inside a git checkout' >/dev/null && ok "guards: outside a checkout is exit 2" || bad "guards: outside a checkout is exit 2"
+# A branch behind main is judged from the merge-base: a test main gained after the fork is not "deleted" by the branch
+B="$T/behind"; fixture "$B"; git -C "$B" switch -q -c feature && printf 'x\n' > "$B/notes.txt" && commit_in "$B" "docs: notes"
+git -C "$B" switch -q main && mkdir -p "$B/m/src/test/kotlin" && printf 'class N { fun n() = assertThat(1) }\n' > "$B/m/src/test/kotlin/N.kt" \
+  && commit_in "$B" "test: N" && git -C "$B" update-ref refs/remotes/origin/main main
+n="$(wc -l < "$VERA_EVENTS_FILE")"
+"$B/scripts/guards.sh" origin/main feature >/dev/null 2>&1 && [ "$(wc -l < "$VERA_EVENTS_FILE")" = "$n" ] \
+  && ok "guards: a branch behind main is judged from the merge-base" || bad "guards: a branch behind main is judged from the merge-base"
 mkdir -p "$P/m/src/main/kotlin" && printf '*.kt -diff\n' > "$P/.gitattributes" && printf '@Suppress("X")\nclass A\n' > "$P/m/src/main/kotlin/A.kt"
 commit_in "$P" "feat: a suppression behind -diff"
 guards_last | grep 'new suppression' >/dev/null && ok "guards: '*.kt -diff' hides no added line" || bad "guards: '*.kt -diff' hides no added line"
@@ -811,6 +824,10 @@ printf 'jamo %s\n' "$(printf '\xe1\x84\x80')" > "$P/j2.md" && commit_in "$P" "do
 guards_last | grep 'Korean text added' >/dev/null && ok "guards: Hangul Jamo are Korean" || bad "guards: Hangul Jamo are Korean"
 printf 'ok\n' > "$P/j3.md" && commit_in "$P" "docs: $(printf '\xed\x95\x9c')"
 guards_last | grep 'Korean text in a commit message' >/dev/null && ok "guards: Korean in a commit message" || bad "guards: Korean in a commit message"
+n="$(wc -l < "$VERA_EVENTS_FILE")"; printf '#!/usr/bin/env bash\necho "$*" >> "$GUARDS_OUT"\n' > "$T/logger" && chmod +x "$T/logger"
+GUARDS_OUT="$T/logger.out" GUARDS_LOGGER="$T/logger" "$P/scripts/guards.sh" HEAD~1 HEAD >/dev/null 2>&1
+grep '^pre-push-guard non-english' "$T/logger.out" >/dev/null && [ "$(wc -l < "$VERA_EVENTS_FILE")" = "$n" ] \
+  && ok "guards: GUARDS_LOGGER replaces the event logger" || bad "guards: GUARDS_LOGGER replaces the event logger"
 git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/main >/dev/null 2>&1
 [ $? -ne 0 ] && last | jq -e '.rule=="push-to-main"' >/dev/null && ok "pre-push refuses a push to main" || bad "pre-push refuses a push to main"
 git -C "$P" update-ref refs/remotes/origin/main HEAD
@@ -819,6 +836,13 @@ git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1
 [ $? -ne 0 ] && last | jq -e '.rule=="blocked-no-wiki-change"' >/dev/null && ok "pre-push: 'Wiki-Skip:' without a reason does not pass" || bad "pre-push: 'Wiki-Skip:' without a reason does not pass"
 git -C "$P" commit -q --amend -m $'chore: touch scripts\n\nWiki-Skip: probe, nothing decided'
 git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/feature >/dev/null 2>&1 && ok "pre-push: 'Wiki-Skip: <reason>' passes" || bad "pre-push: 'Wiki-Skip: <reason>' passes"
+# The wiki gate also covers CI, the review contract, detekt config and the root build (neither ADR nor trailer here)
+for f in .github/workflows/x.yml REVIEW.md config/detekt/x.yml settings.gradle.kts gradle/x.toml; do
+  git -C "$P" switch -q -C wiki-gate refs/remotes/origin/main && mkdir -p "$P/$(dirname "$f")" && printf 'x\n' > "$P/$f" && commit_in "$P" "chore: touch $f"
+  git -C "$P" push -q "$T/remote.git" HEAD:refs/heads/wiki-gate >/dev/null 2>&1
+  [ $? -ne 0 ] && last | jq -e '.rule=="blocked-no-wiki-change"' >/dev/null && ok "pre-push wiki gate covers $f" || bad "pre-push wiki gate covers $f"
+done
+git -C "$P" switch -q main
 git -C "$P" worktree add -q "$T/pwt" -b wt-guards && printf '@Suppress("Y")\nclass B\n' > "$T/pwt/m/src/main/kotlin/B.kt" && commit_in "$T/pwt" "feat: B"
 git -C "$T/pwt" push -q "$T/remote.git" HEAD:refs/heads/wt-guards >/dev/null 2>&1
 [ $? -ne 0 ] && jq -s -e 'map(select(.branch=="wt-guards" and .rule=="new-suppress")) | length == 1' "$VERA_EVENTS_FILE" >/dev/null \
@@ -1031,7 +1055,7 @@ description: Commit staged changes as an English Conventional Commit with no AI 
 2. New production `.kt` without a test `.kt` in the same PR scope → warn loudly (push gate will enforce).
 3. Test files deleted or with fewer assertions → require trailer `Test-Change: <reason>` with the reason in the body; adding tests needs none.
 4. Files under `db/migration/` that exist on `origin/main` and are modified → refuse (immutable migrations); a migration added in this branch may still change.
-5. Hangul in staged files other than `README.ko.md` → refuse (English artifacts). Scan them with `LC_ALL=C command grep -l -E $'[\xEA-\xED][\x80-\xBF][\x80-\xBF]'`; plain `grep` may be ugrep in the agent shell and miss byte patterns.
+5. Hangul in an added staged line outside `README.ko.md` → refuse (English artifacts). The scan matches guards.sh check 6 (same bytes, jamo included; only added lines, so English edits to a file that already holds Korean pass): `git -C <root> diff --cached --text -U0 -- . ':(exclude)README.ko.md' ':(exclude)docs/research/' | LC_ALL=C command grep -E $'^\\+.*([\xEA-\xED][\x80-\xBF][\x80-\xBF]|\xE3[\x84-\x86][\x80-\xBF]|\xE1[\x84-\x87][\x80-\xBF])'` — any output refuses. Plain `grep` may be ugrep in the agent shell and miss byte patterns.
 6. Run `./scripts/check.sh`; paste its `RESULT` line into the preview.
 
 ## Process
@@ -1339,9 +1363,10 @@ git commit -m "docs: add repo-local LLM wiki schema, index, counted lessons and 
 
 ```bash
 #!/usr/bin/env bash
-# guards.sh [<base> <head>] — constitution guards over a commit range (default origin/main..HEAD). Fail-closed.
-# Exit 0 = pass, 1 = violation, 2 = cannot judge (not a checkout, a ref that does not resolve, a failing git command).
-# Each failure prints WHAT is wrong and HOW to fix it (the message is an instruction to the agent).
+# guards.sh [<base> <head>] — constitution guards over what <head> adds since it left <base> (default origin/main..HEAD):
+# diffs start at their merge-base, so files main gained after the fork never read as deleted. Fail-closed.
+# Exit 0 = pass, 1 = violation, 2 = cannot judge (not a checkout, a ref that does not resolve or shares no history with
+# the other, a failing git command). Each failure prints WHAT is wrong and HOW to fix it (an instruction to the agent).
 set -uo pipefail
 # Check pipelines end in a reader that consumes all input (grep ... >/dev/null, never grep -q): under pipefail an early
 # exit kills the writer with SIGPIPE on a large diff or log, and a match would read as a miss.
@@ -1350,14 +1375,16 @@ set -uo pipefail
 # 'git -C <dir> rev-parse --show-toplevel' answers <dir> itself, so the event log path would point nowhere.
 ROOT="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null)" \
   || { echo "guards: not inside a git checkout" >&2; exit 2; }
-LOG="$ROOT/.claude/hooks/log-gate-event.sh"
+# GUARDS_LOGGER replaces the event logger: CI sets it to 'true', so the checkout's hook script (PR code) never runs there.
+LOG="${GUARDS_LOGGER:-$ROOT/.claude/hooks/log-gate-event.sh}"
 die() { echo "guards: $1" >&2; exit 2; }
 BASE="${1:-refs/remotes/origin/main}"; HEAD_="${2:-HEAD}"
 # No fallback base: the root commit made the range all of history and blamed files nobody touched.
 for ref in "$BASE" "$HEAD_"; do
   git -C "$ROOT" rev-parse --verify -q "$ref^{commit}" >/dev/null || die "cannot resolve '$ref' — run: git fetch origin main"
 done
-RANGE="$BASE..$HEAD_"
+RANGE="$BASE..$HEAD_"   # as given, for messages and git log (a log range already stops where the two histories meet)
+BASE="$(git -C "$ROOT" merge-base "$BASE" "$HEAD_")" || die "$RANGE has no merge-base — run: git fetch origin main"
 fail=0
 violation() { echo "✖ $1"; echo "  → $2"; "$LOG" pre-push-guard "$3" "$1"; fail=1; }
 # Content diffs are raw text whatever the repository says: a PR's '.gitattributes' with '*.kt -diff' (or a textconv,
@@ -1474,8 +1501,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
   [ "$local_sha" = "$Z40" ] && continue                                 # deletions pass
   # Base = where the branch leaves main, on every push (never $remote_sha): after 'git merge origin/main'
-  # the old remote tip would pull other PRs' commits, trailers and deletions into the range. No merge-base →
-  # empty base → guards.sh falls back to origin/main and, if that does not resolve either, asks for a fetch.
+  # the old remote tip would pull other PRs' commits, trailers and deletions into the range. guards.sh reduces any
+  # base to that merge-base itself, so a direct run agrees with this hook. No merge-base → empty base → guards.sh
+  # falls back to origin/main and, if that does not resolve either, asks for a fetch.
   base="$(git merge-base refs/remotes/origin/main "$local_sha" 2>/dev/null)"
 
   # --- guards: fail-closed ---
@@ -1498,10 +1526,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     "$LOG" wiki-gate skipped-with-trailer "$(git log --format=%B "$base..$local_sha" | grep -m1 '^Wiki-Skip:[[:space:]]*[^[:space:]]')"
     continue
   fi
-  # code-only ranges without decisions are common; block only when the range touched source or harness
-  if git diff --name-only "$base" "$local_sha" | grep -qE '^(platform|apps|ingestion|bootstrap|\.claude|\.githooks|scripts|CLAUDE\.md)'; then
+  # code-only ranges without decisions are common; block only when the range touched source, harness, CI, the review
+  # contract, detekt config or the root build (root *.gradle.kts, gradle/)
+  if git diff --name-only "$base" "$local_sha" | grep -qE '^(platform|apps|ingestion|bootstrap|\.claude|\.githooks|\.github|scripts|config/detekt|gradle/|CLAUDE\.md|REVIEW\.md|[^/]+\.gradle\.kts$)'; then
     "$LOG" wiki-gate blocked-no-wiki-change "$remote_ref"
-    echo "🛑 wiki gate: this range changes code or harness but no file under docs/llm-wiki/wiki/ (concepts/lessons.md alone does not count)." >&2
+    echo "🛑 wiki gate: this range changes code, harness, CI or build files but no file under docs/llm-wiki/wiki/ (concepts/lessons.md alone does not count)." >&2
     echo "   Run /wiki-ingest (each decision → an ADR in docs/llm-wiki/wiki/decisions/), or add a commit trailer 'Wiki-Skip: <reason>' if truly nothing was decided." >&2
     exit 1
   fi
@@ -1756,7 +1785,8 @@ jobs:
             echo "::notice::The base commit has no scripts/guards.sh; running the PR's own copy."
             guards=scripts/guards.sh
           fi
-          bash "$guards" "$BASE" "$HEAD_SHA"
+          # The checkout's .claude/hooks/log-gate-event.sh is PR code; GUARDS_LOGGER=true makes event logging a no-op.
+          GUARDS_LOGGER=true bash "$guards" "$BASE" "$HEAD_SHA"
 ```
 
 The guards job runs the merge-base's copy of `scripts/guards.sh` from `$RUNNER_TEMP`, so a PR that weakens the script cannot pass its own required check; only the PR that introduces the script, whose base has none, runs its own copy.
@@ -1778,7 +1808,8 @@ permissions:
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false
+    # A fork PR gets no id-token for the action, so the job could only fail there.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1818,7 +1849,7 @@ name: harness-improve
 on:
   schedule:
     - cron: '0 21 * * 0'    # Monday 06:00 KST — weekly promotion pass
-    - cron: '0 22 1 * *'    # 1st of month 07:00 KST — monthly prune pass
+    - cron: '0 22 1 * *'    # 2nd of month 07:00 KST (22:00 UTC on the 1st) — monthly prune pass
   workflow_dispatch:
     inputs:
       mode:
@@ -1873,6 +1904,10 @@ jobs:
 
             Read .harness/events.jsonl, docs/llm-wiki/wiki/concepts/lessons.md, CLAUDE.md, .claude/rules/*.md,
             config/detekt/detekt.yml, scripts/guards.sh, .claude/hooks/*.sh.
+            Counting events: count unique lines only, and skip lines with "probe": true (deliberate gate tests).
+            Commands: run git and ./scripts/check.sh from the repository root exactly in the allowed forms (git status,
+            ./scripts/check.sh) — no git -C and no absolute paths, unlike CLAUDE.md asks of local sessions: the allowed
+            tool patterns match only these forms.
 
             Proposal rules:
               - Skip an item that already has an open PR or issue (gh pr list, gh issue list).
@@ -1894,16 +1929,17 @@ jobs:
               - Find lessons with count >= 3 and status open, and gate rules that fired >= 3 times for the same cause in the last 30 days.
               - For EACH such item open exactly ONE proposal for exactly one of: a CLAUDE.md line, a .claude/rules/<file>.md entry,
                 a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test. Cite the event lines and lesson entry, and mark
-                the lesson status: promoted (pending) in the same pull request or in the issue's patch.
-              - If nothing qualifies, do nothing and print "promote: nothing due".
+                the lesson "status: proposed" with the pull request or issue link, in the same pull request or in the issue's patch.
+              - Append this week's metrics line to .harness/metrics.md with exactly the columns of its header row, computed from
+                git log, .harness/events.jsonl, gh pr list --state merged and gh run list. It goes into the first promote pull
+                request, or, when nothing else is due, into its own pull request on branch harness/promote-metrics-<yyyymmdd>.
+              - If no lesson or rule qualifies, print "promote: nothing due" after adding the metrics line.
             If mode is prune:
               - List every rule, hook pattern and CLAUDE.md line that has zero related events in .harness/events.jsonl for the last 30 days
                 and is not marked "keep:" with a reason. Run the checks in .claude/skills/wiki-lint/SKILL.md and check CLAUDE.md
                 for content derivable from code.
               - Propose the deletions in ONE pull request on branch harness/prune-<yyyymmdd> (those under .claude/ in ONE issue),
                 one bullet per item with the evidence (no firing in 30 days). Never delete block-danger patterns for destructive commands.
-              - Append a weekly metrics line to .harness/metrics.md (merged PRs, gate firings by rule, critic blocking count, CI failures)
-                computed from git log, events.jsonl, gh pr list --state merged and gh run list.
             Write in English. Keep each PR under 100 changed lines.
 ```
 
@@ -2012,8 +2048,8 @@ const FILE_FINDINGS = {
 }
 
 const files = (args && args.files) || []
-if (files.length === 0) {
-  return { error: 'Pass args.files: output of `git diff --name-only $(git describe --tags --abbrev=0)..HEAD -- "*.kt" "*.sql"`' }
+if (!Array.isArray(files) || files.length === 0) {
+  return { error: 'Pass args.files as a JSON array of paths, e.g. the lines of `git diff --name-only $(git describe --tags --abbrev=0)..HEAD -- "*.kt" "*.sql"`' }
 }
 
 const perFile = await parallel(files.map((file) => () =>

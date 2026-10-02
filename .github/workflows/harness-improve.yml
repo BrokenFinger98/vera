@@ -3,7 +3,7 @@ name: harness-improve
 on:
   schedule:
     - cron: '0 21 * * 0'    # Monday 06:00 KST — weekly promotion pass
-    - cron: '0 22 1 * *'    # 1st of month 07:00 KST — monthly prune pass
+    - cron: '0 22 1 * *'    # 2nd of month 07:00 KST (22:00 UTC on the 1st) — monthly prune pass
   workflow_dispatch:
     inputs:
       mode:
@@ -58,6 +58,10 @@ jobs:
 
             Read .harness/events.jsonl, docs/llm-wiki/wiki/concepts/lessons.md, CLAUDE.md, .claude/rules/*.md,
             config/detekt/detekt.yml, scripts/guards.sh, .claude/hooks/*.sh.
+            Counting events: count unique lines only, and skip lines with "probe": true (deliberate gate tests).
+            Commands: run git and ./scripts/check.sh from the repository root exactly in the allowed forms (git status,
+            ./scripts/check.sh) — no git -C and no absolute paths, unlike CLAUDE.md asks of local sessions: the allowed
+            tool patterns match only these forms.
 
             Proposal rules:
               - Skip an item that already has an open PR or issue (gh pr list, gh issue list).
@@ -79,14 +83,15 @@ jobs:
               - Find lessons with count >= 3 and status open, and gate rules that fired >= 3 times for the same cause in the last 30 days.
               - For EACH such item open exactly ONE proposal for exactly one of: a CLAUDE.md line, a .claude/rules/<file>.md entry,
                 a detekt or ArchUnit rule, a guards.sh/hook pattern, or a test. Cite the event lines and lesson entry, and mark
-                the lesson status: promoted (pending) in the same pull request or in the issue's patch.
-              - If nothing qualifies, do nothing and print "promote: nothing due".
+                the lesson "status: proposed" with the pull request or issue link, in the same pull request or in the issue's patch.
+              - Append this week's metrics line to .harness/metrics.md with exactly the columns of its header row, computed from
+                git log, .harness/events.jsonl, gh pr list --state merged and gh run list. It goes into the first promote pull
+                request, or, when nothing else is due, into its own pull request on branch harness/promote-metrics-<yyyymmdd>.
+              - If no lesson or rule qualifies, print "promote: nothing due" after adding the metrics line.
             If mode is prune:
               - List every rule, hook pattern and CLAUDE.md line that has zero related events in .harness/events.jsonl for the last 30 days
                 and is not marked "keep:" with a reason. Run the checks in .claude/skills/wiki-lint/SKILL.md and check CLAUDE.md
                 for content derivable from code.
               - Propose the deletions in ONE pull request on branch harness/prune-<yyyymmdd> (those under .claude/ in ONE issue),
                 one bullet per item with the evidence (no firing in 30 days). Never delete block-danger patterns for destructive commands.
-              - Append a weekly metrics line to .harness/metrics.md (merged PRs, gate firings by rule, critic blocking count, CI failures)
-                computed from git log, events.jsonl, gh pr list --state merged and gh run list.
             Write in English. Keep each PR under 100 changed lines.

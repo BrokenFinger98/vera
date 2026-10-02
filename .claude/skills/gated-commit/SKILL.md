@@ -17,7 +17,7 @@ description: Commit staged changes as an English Conventional Commit with no AI 
 2. New production `.kt` without a test `.kt` in the same PR scope → warn loudly (push gate will enforce).
 3. Test files deleted or with fewer assertions → require trailer `Test-Change: <reason>` with the reason in the body; adding tests needs none.
 4. Files under `db/migration/` that exist on `origin/main` and are modified → refuse (immutable migrations); a migration added in this branch may still change.
-5. Hangul in staged files other than `README.ko.md` → refuse (English artifacts). Scan them with `LC_ALL=C command grep -l -E $'[\xEA-\xED][\x80-\xBF][\x80-\xBF]'`; plain `grep` may be ugrep in the agent shell and miss byte patterns.
+5. Hangul in an added staged line outside `README.ko.md` → refuse (English artifacts). The scan matches guards.sh check 6 (same bytes, jamo included; only added lines, so English edits to a file that already holds Korean pass): `git -C <root> diff --cached --text -U0 -- . ':(exclude)README.ko.md' ':(exclude)docs/research/' | LC_ALL=C command grep -E $'^\\+.*([\xEA-\xED][\x80-\xBF][\x80-\xBF]|\xE3[\x84-\x86][\x80-\xBF]|\xE1[\x84-\x87][\x80-\xBF])'` — any output refuses. Plain `grep` may be ugrep in the agent shell and miss byte patterns.
 6. Run `./scripts/check.sh`; paste its `RESULT` line into the preview.
 
 ## Process
