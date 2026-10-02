@@ -138,7 +138,8 @@ root build files and migrations only in solo tickets.
 ## State file operations
 
 - Design decision → ADR file in `docs/llm-wiki/wiki/decisions/<date>-<slug>.md` (one per decision).
-- Step done → `progress.md` entry (date, ✅, PR number, evidence).
+- Step done → `progress.md` entry (date, ✅, issue `#<n>`, evidence); never a commit hash (squash rewrites
+  them). Use the PR number only when a change has no issue.
 - New phase → rewrite `goal.md` completely; history lives in `progress.md`.
 - Conflict → **code beats state files** (they may be stale).
 - Something slowed you or a rule was missing → `/finish-task` records it in `docs/llm-wiki/wiki/concepts/lessons.md`.
@@ -960,7 +961,7 @@ description: Close the loop on a ticket once the code is done and check.sh and i
 Run `/code-review` for a general pass, then the `critic` subagent: have it apply REVIEW.md's must-check list to `git -C <root> diff origin/main...HEAD`, then attack with: "Do not trust the implementer's claims. Verify by running. Attack: boundary values, null/empty, concurrency, ACL bypass, migration reversibility. Report gaps affecting correctness or requirements only." Fix blocking findings and log each one with `<root>/.claude/hooks/log-gate-event.sh critic <rule> <one line>`; list the rest with disposition.
 
 ## 3. Progress
-Append to `.harness/state/progress.md` above `<!-- ARCHIVE -->`: `## [YYYY-MM-DD] #<n> <title> ✅` + commits + evidence lines.
+Append to `.harness/state/progress.md` above `<!-- ARCHIVE -->`: `## [YYYY-MM-DD] #<n> <title> ✅` + evidence lines. `#<n>` is the issue number — the PR's `Closes #<n>` links the two; no commit hashes (the squash merge rewrites them).
 
 ## 4. Retro → counted lessons (self-improvement loop, spec §10.1)
 Answer three questions in one line each and merge into `docs/llm-wiki/wiki/concepts/lessons.md`:
@@ -1930,7 +1931,7 @@ Böckeler (martinfowler.com, 2026-08-10) found no quality difference between age
 ## Options considered
 Enforce TDD via skills/hooks · scenarios + gates · scenarios only.
 ## Decision
-The owner writes EARS acceptance criteria in the ticket; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` (`test`) + ArchUnit (`archTest`), Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
+EARS acceptance criteria are drafted by the agent in /ticket and approved by the owner; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` (`test`) + ArchUnit (`archTest`), Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
 ## Rationale
 What the machine can enforce is "tests come with the code" and "tests are not weakened"; the order of writing is unprovable and, per the evidence, not valuable.
 ## Accepted costs

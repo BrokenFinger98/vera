@@ -16,7 +16,7 @@ description: Close the loop on a ticket once the code is done and check.sh and i
 Run `/code-review` for a general pass, then the `critic` subagent: have it apply REVIEW.md's must-check list to `git -C <root> diff origin/main...HEAD`, then attack with: "Do not trust the implementer's claims. Verify by running. Attack: boundary values, null/empty, concurrency, ACL bypass, migration reversibility. Report gaps affecting correctness or requirements only." Fix blocking findings and log each one with `<root>/.claude/hooks/log-gate-event.sh critic <rule> <one line>`; list the rest with disposition.
 
 ## 3. Progress
-Append to `.harness/state/progress.md` above `<!-- ARCHIVE -->`: `## [YYYY-MM-DD] #<n> <title> ✅` + commits + evidence lines.
+Append to `.harness/state/progress.md` above `<!-- ARCHIVE -->`: `## [YYYY-MM-DD] #<n> <title> ✅` + evidence lines. `#<n>` is the issue number — the PR's `Closes #<n>` links the two; no commit hashes (the squash merge rewrites them).
 
 ## 4. Retro → counted lessons (self-improvement loop, spec §10.1)
 Answer three questions in one line each and merge into `docs/llm-wiki/wiki/concepts/lessons.md`:

@@ -167,9 +167,9 @@ engine (tables and fields defined at runtime), a rule engine with sandboxed scri
 layering/upgrade engine that keeps customer changes apart from the standard, and later
 multi-instance provisioning — and puts an IT Asset Management (ITAM) application on top of it.
 
-**Every line of code in this repository is written by AI coding agents.** The owner writes
-specs, tickets and reviews. How that works is documented in `CLAUDE.md` and
-`docs/superpowers/specs/`.
+**Every line of code in this repository is written by AI coding agents.** The owner approves
+specs and tickets, reviews designs and approves merges; agents write all code, tests and docs.
+How that works is documented in `CLAUDE.md` and `docs/superpowers/specs/`.
 
 ## Status
 
@@ -211,8 +211,9 @@ Vera는 학습·포트폴리오 프로젝트입니다. 플랫폼 층(런타임�
 스크립트 룰 엔진, 표준과 고객 수정분을 분리하는 레이어링/업그레이드 엔진, 나중에 멀티 인스턴스 프로비저닝)을
 먼저 만들고, 그 위에 IT 자산관리(ITAM) 앱을 올립니다.
 
-**이 저장소의 모든 코드는 AI 코딩 에이전트가 작성합니다.** 소유자는 스펙·티켓·리뷰만 합니다. 방식은
-`CLAUDE.md`와 `docs/superpowers/specs/`에 있습니다.
+**이 저장소의 모든 코드는 AI 코딩 에이전트가 작성합니다.** 소유자는 스펙과 티켓을 승인하고, 설계를 리뷰하고,
+머지를 승인합니다. 코드·테스트·문서는 모두 에이전트가 작성합니다. 방식은 `CLAUDE.md`와
+`docs/superpowers/specs/`에 있습니다.
 
 ## 상태
 

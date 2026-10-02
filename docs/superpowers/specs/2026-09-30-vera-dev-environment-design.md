@@ -22,7 +22,7 @@ comes from the origin chat and is **not** redesigned here; it is restated only w
 | D1 | Public GitHub repository, **English committed artifacts** (code, commits, ADRs, CLAUDE.md, wiki). `README.ko.md` is the only Korean twin | Korean research notes live in the owner's central wiki, not in this repo |
 | D2 | Stack raised to Sept-2026 baseline: **Java 25 LTS, Spring Boot 4.1.x, Spring Modulith 2.1.x, Gradle 9.7.x, PostgreSQL 18, jOOQ 3.21.7 (OSS, BOM), Flyway (BOM), Valkey 9, Kafka 4.2.1 (BOM, compose image), Testcontainers 2.0.x, Keycloak 26.7, springdoc 3.1, OTel starter** | The origin chat's Java 21 / Boot 3.x / PG 16 / Redis plan is superseded |
 | D3 | **Kotlin 2.3.21**, because the Spring Boot 4.1 BOM manages it; revisit Kotlin 2.4 with Boot 4.2 (GA 2026-11). Revised 2026-10-01: the linter no longer holds Kotlin back | ktfmt via Spotless (version-agnostic) + **detekt 2.0.0-alpha.x**, adopted 2026-10-01: 1.23.x (unmaintained since 2025-02, Kotlin 2.0 compiler) cannot run on JDK 25. 2.0 is built on Kotlin 2.4, runs on the JDK 25 daemon and resolves types on every source set. The alpha is pinned exactly, never ships, and reverts in one PR |
-| D4 | **Scenarios + gates, not ritual TDD.** The owner writes EARS acceptance scenarios in the ticket; the agent writes tests and code; PRs must ship tests; architecture tests and scoped mutation testing watch quality | The superpowers TDD skill is used only to pick verification scenarios. "No `.kt` without a test in the same PR" is a push/CI gate, not an edit-time rule |
+| D4 | **Scenarios + gates, not ritual TDD.** EARS acceptance criteria are drafted by the agent in /ticket and approved by the owner; the agent writes tests and code; PRs must ship tests; architecture tests and scoped mutation testing watch quality | The superpowers TDD skill is used only to pick verification scenarios. "No `.kt` without a test in the same PR" is a push/CI gate, not an edit-time rule |
 | D5 | Parallel work via **Orca**, 2–3 worktrees max, one owned module per ticket | Shared code (root build files, Flyway migrations, `common`) is changed only in a solo, preceding ticket |
 | D6 | GraalJS `js-community` 25.x on the stock JDK (interpreter only) to start; benchmark before considering GraalVM CE as runtime | Rule-engine performance target is deferred to Phase 3 |
 | D7 | Stop-hook quality gate runs as a **trial**; after one month audit whether it actually blocked a mistake, and keep or delete accordingly | Follows the owner's harness-debt-audit principle ("evidence of firing, or delete") |
@@ -236,7 +236,7 @@ PoCs, each ≤ half a day, results recorded as ADRs:
 ## 14. Out of scope for Phase 0
 
 Platform feature design (engines, storage strategy, ITAM domain model) beyond what the first ticket needs; Kubernetes/kind and the control plane;
-a frontend; Beads or any external issue tracker (GitHub issue relations + Orca dependencies suffice); GraalVM CE as runtime; Claude Code cloud sessions;
+a frontend; Beads or any external issue tracker (`Blocked by` / `Blocks` lines in the issue body plus Orca dependencies suffice); GraalVM CE as runtime; Claude Code cloud sessions;
 any graph orchestration runtime (LangGraph, Agent Framework, custom) for the pipeline; code knowledge graph tools (graphify, CodeGraph) until the codebase or
 cross-module misses justify a two-week pilot; harness evals (replaying canonical tickets) — revisit after Phase 1.
 

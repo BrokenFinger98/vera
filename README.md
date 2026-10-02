@@ -8,9 +8,9 @@ engine (tables and fields defined at runtime), a rule engine with sandboxed scri
 layering/upgrade engine that keeps customer changes apart from the standard, and later
 multi-instance provisioning — and puts an IT Asset Management (ITAM) application on top of it.
 
-**Every line of code in this repository is written by AI coding agents.** The owner writes
-specs, tickets and reviews. How that works is documented in `CLAUDE.md` and
-`docs/superpowers/specs/`.
+**Every line of code in this repository is written by AI coding agents.** The owner approves
+specs and tickets, reviews designs and approves merges; agents write all code, tests and docs.
+How that works is documented in `CLAUDE.md` and `docs/superpowers/specs/`.
 
 ## Status
 

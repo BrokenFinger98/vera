@@ -85,7 +85,8 @@ root build files and migrations only in solo tickets.
 ## State file operations
 
 - Design decision → ADR file in `docs/llm-wiki/wiki/decisions/<date>-<slug>.md` (one per decision).
-- Step done → `progress.md` entry (date, ✅, PR number, evidence).
+- Step done → `progress.md` entry (date, ✅, issue `#<n>`, evidence); never a commit hash (squash rewrites
+  them). Use the PR number only when a change has no issue.
 - New phase → rewrite `goal.md` completely; history lives in `progress.md`.
 - Conflict → **code beats state files** (they may be stale).
 - Something slowed you or a rule was missing → `/finish-task` records it in `docs/llm-wiki/wiki/concepts/lessons.md`.
