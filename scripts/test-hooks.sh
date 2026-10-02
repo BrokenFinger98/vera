@@ -20,14 +20,18 @@ fixture() {
 # simulate <arg>: a 30 s background process whose command line holds <arg>; its pid lands in $sim.
 simulate() { perl -e 'sleep 30' "$1" & sim=$!; for _ in $(seq 50); do pgrep -f "$1" >/dev/null && return; sleep 0.1; done; }
 
-# log-gate-event writes one valid JSON line, masks NAME=value assignments, and keeps the line ASCII (jq -a) even
-# for a detail with invalid UTF-8 (the lone byte \xff becomes U+FFFD)
+# log-gate-event writes one valid JSON line, masks secret-looking assignments only, and keeps the line ASCII (jq -a)
+# even for a detail with invalid UTF-8 (the lone byte \xff becomes U+FFFD)
 "$H/log-gate-event.sh" test-gate unit-test "hello world"
 last | jq -e '.gate=="test-gate" and .rule=="unit-test" and (.ts|length)==20' >/dev/null && ok "log-gate-event json" || bad "log-gate-event json"
-"$H/log-gate-event.sh" test-gate mask "export API_KEY=abc123 then PASSWORD=x y"
-[ "$(last | jq -r .detail)" = "export API_KEY=*** then PASSWORD=*** y" ] && ok "log-gate-event masks NAME=value" || bad "log-gate-event masks NAME=value"
+"$H/log-gate-event.sh" test-gate mask "PGPASSWORD=a GH_TOKEN=b API_KEY=c aws_secret_access_key=d --password=e --token=f --api-key=g"
+[ "$(last | jq -r .detail)" = "PGPASSWORD=*** GH_TOKEN=*** API_KEY=*** aws_secret_access_key=*** --password=*** --token=*** --api-key=***" ] \
+  && ok "log-gate-event masks secret-looking assignments" || bad "log-gate-event masks secret-looking assignments"
+keep="RESULT check exit=1 seconds=3; git restore --source=HEAD x; git -c core.hooksPath=/dev/null push"
+"$H/log-gate-event.sh" test-gate keep "$keep"
+[ "$(last | jq -r .detail)" = "$keep" ] && ok "log-gate-event keeps other assignments readable" || bad "log-gate-event keeps other assignments readable"
 "$H/log-gate-event.sh" test-gate non-ascii "$(printf 'caf\xc3\xa9 \xff')"
-last | jq -e '.detail == "café �"' >/dev/null && ! last | LC_ALL=C grep '[^ -~]' >/dev/null \
+last | jq -e '.detail == "caf\u00e9 \ufffd"' >/dev/null && ! last | LC_ALL=C grep '[^ -~]' >/dev/null \
   && ok "log-gate-event escapes non-ASCII and invalid UTF-8" || bad "log-gate-event escapes non-ASCII and invalid UTF-8"
 
 # Without VERA_EVENTS_FILE every worktree logs to one untracked file in the git common dir; detached HEAD logs 'detached'

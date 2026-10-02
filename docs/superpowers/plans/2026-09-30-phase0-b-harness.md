@@ -390,13 +390,19 @@ Five hooks. `log-gate-event.sh` is called by the other hooks, by `.githooks/pre-
 # The only writer of that log (spec §10.1 Capture); scripts/publish-events.sh copies it into .harness/events.jsonl.
 # gate  : block-danger | stop-gate | pre-push-guard | wiki-gate | critic | ci
 # rule  : short machine name, e.g. "deleted-test-file", "check.sh-failed", "force-push"
-# detail: free text; NAME=value assignments are masked as NAME=***, then cut to 300 bytes; jq -a escapes non-ASCII
+# detail: free text; secret-looking assignments are masked (below), then cut to 300 bytes; jq -a escapes non-ASCII
 set -uo pipefail
 export LC_ALL=C   # bytes, not characters: invalid UTF-8 in a detail must not stop tr, sed or cut
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ $# -ge 2 ] || exit 0
 gate="$1"; rule="$2"; shift 2
-detail="$(printf '%s' "$*" | tr '\n' ' ' | sed -E 's/([A-Za-z_][A-Za-z0-9_]*)=[^[:space:]]+/\1=***/g' | cut -c1-300)"
+# A NAME=value or --long-option=value whose name holds one of these words, in any case (PGPASSWORD, GH_TOKEN,
+# aws_secret_access_key, --api-key), keeps only NAME=***; every other assignment (exit=1, --source=HEAD) stays readable.
+SENSITIVE='(pass|pwd|secret|token|key|auth|cred|session|cookie)'
+detail="$(printf '%s' "$*" | tr '\n' ' ' \
+  | sed -E -e "s/(--[A-Za-z0-9-]*${SENSITIVE}[A-Za-z0-9-]*)=[^[:space:]]+/\1=***/gI" \
+           -e "s/([A-Za-z0-9_]*${SENSITIVE}[A-Za-z0-9_]*)=[^[:space:]]+/\1=***/gI" \
+  | cut -c1-300)"
 branch="$(git -C "$ROOT" branch --show-current 2>/dev/null)"; [ -n "$branch" ] || branch=detached
 ticket="$(printf '%s' "$branch" | sed -nE 's#^[a-z]+/([0-9]+)-.*#\1#p')"
 EVENTS="${VERA_EVENTS_FILE:-$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/vera-events.jsonl}"
@@ -676,14 +682,18 @@ fixture() {
 # simulate <arg>: a 30 s background process whose command line holds <arg>; its pid lands in $sim.
 simulate() { perl -e 'sleep 30' "$1" & sim=$!; for _ in $(seq 50); do pgrep -f "$1" >/dev/null && return; sleep 0.1; done; }
 
-# log-gate-event writes one valid JSON line, masks NAME=value assignments, and keeps the line ASCII (jq -a) even
-# for a detail with invalid UTF-8 (the lone byte \xff becomes U+FFFD)
+# log-gate-event writes one valid JSON line, masks secret-looking assignments only, and keeps the line ASCII (jq -a)
+# even for a detail with invalid UTF-8 (the lone byte \xff becomes U+FFFD)
 "$H/log-gate-event.sh" test-gate unit-test "hello world"
 last | jq -e '.gate=="test-gate" and .rule=="unit-test" and (.ts|length)==20' >/dev/null && ok "log-gate-event json" || bad "log-gate-event json"
-"$H/log-gate-event.sh" test-gate mask "export API_KEY=abc123 then PASSWORD=x y"
-[ "$(last | jq -r .detail)" = "export API_KEY=*** then PASSWORD=*** y" ] && ok "log-gate-event masks NAME=value" || bad "log-gate-event masks NAME=value"
+"$H/log-gate-event.sh" test-gate mask "PGPASSWORD=a GH_TOKEN=b API_KEY=c aws_secret_access_key=d --password=e --token=f --api-key=g"
+[ "$(last | jq -r .detail)" = "PGPASSWORD=*** GH_TOKEN=*** API_KEY=*** aws_secret_access_key=*** --password=*** --token=*** --api-key=***" ] \
+  && ok "log-gate-event masks secret-looking assignments" || bad "log-gate-event masks secret-looking assignments"
+keep="RESULT check exit=1 seconds=3; git restore --source=HEAD x; git -c core.hooksPath=/dev/null push"
+"$H/log-gate-event.sh" test-gate keep "$keep"
+[ "$(last | jq -r .detail)" = "$keep" ] && ok "log-gate-event keeps other assignments readable" || bad "log-gate-event keeps other assignments readable"
 "$H/log-gate-event.sh" test-gate non-ascii "$(printf 'caf\xc3\xa9 \xff')"
-last | jq -e '.detail == "café �"' >/dev/null && ! last | LC_ALL=C grep '[^ -~]' >/dev/null \
+last | jq -e '.detail == "caf\u00e9 \ufffd"' >/dev/null && ! last | LC_ALL=C grep '[^ -~]' >/dev/null \
   && ok "log-gate-event escapes non-ASCII and invalid UTF-8" || bad "log-gate-event escapes non-ASCII and invalid UTF-8"
 
 # Without VERA_EVENTS_FILE every worktree logs to one untracked file in the git common dir; detached HEAD logs 'detached'
