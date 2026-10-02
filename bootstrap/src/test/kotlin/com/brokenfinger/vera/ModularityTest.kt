@@ -42,3 +42,5 @@ class ModularityTest {
         assertThat(File(out).list()).hasSize(7)
     }
 }
+
+// Acceptance probe for issue 5: a test-source change without the test-change label.
