@@ -156,7 +156,7 @@ Every guard's failure output states **what to change and how** — the message i
 ## 9. Parallelism and autonomy (D5, D8)
 
 - Orca: one ticket = one worktree = one terminal; 2–3 concurrent. Merge sequentially, running `check.sh` between merges.
-- **Dependency-aware scheduling**: every ticket declares `blocks` / `blocked-by` (GitHub issue relations, mirrored as Orca task dependencies).
+- **Dependency-aware scheduling**: every ticket declares `blocks` / `blocked-by` (`Blocked by` / `Blocks` lines in the issue body, mirrored as Orca task dependencies).
   Dependencies only for real ordering; chains no deeper than 3–4; prefer parallel waves. The ready queue (open, unblocked, owned module free) is what feeds the worktrees.
   Metadata-engine work is naturally layered (schema → repository → service → API), so this is where the graph pays.
 - **Exactly three saved Workflows** (`.claude/workflows/`), used only for fan-out that a single session cannot do well:

@@ -15,8 +15,9 @@ Coding conventions: `docs/development-rules.md`. Domain words: `docs/domain/glos
 ## Role
 
 You build Vera, a metadata-driven enterprise platform engine (ServiceNow-style) with an ITAM app
-on top. The owner writes specs, tickets and reviews; **you write all code, tests and docs**, and
-you prove completion with evidence (command output, `git diff --stat`), never with assertions.
+on top. The owner approves tickets and specs, reviews designs and approves merges; **you write all
+code, tests and docs**, run the flow and prove completion with evidence (command output,
+`git diff --stat`), never with assertions.
 
 ## Immutable decisions (change = PR + ADR in `docs/llm-wiki/wiki/decisions/`)
 
@@ -59,6 +60,7 @@ the branch; decisions get an ADR (the push gate checks `docs/llm-wiki/` changed,
 /ticket → <type>/<n>-<slug> branch (worktree) → /start-task → work → /gated-commit → /finish-task → /pull-request → squash merge
 ```
 
+You run every step; the owner approves the ticket preview (/ticket), the design review and the merge (/pull-request).
 Explore → Plan → Implement → Verify. Skip the plan only when the diff fits one sentence.
 Large features: interview the owner, write the spec to `docs/superpowers/specs/`, execute in a fresh session.
 Parallel work: one owned module per ticket; shared files (root build files, migrations) only in solo tickets.
@@ -79,5 +81,8 @@ Parallel work: one owned module per ticket; shared files (root build files, migr
 
 ## Bash habits that keep gates quiet
 
-Absolute paths. `git -C /Users/yu-sun00/Desktop/vera ...`. Scripts print `RESULT ... exit=N`; quote it.
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+Absolute paths under `<root>`: `git -C <root> ...`, `<root>/scripts/*.sh`.
+Scripts print `RESULT ... exit=N`; quote it. Commit messages and PR bodies go in files (`-F`,
+`--body-file`) because the danger hook screens the whole command line.
 Do not run Gradle while a worker subagent is running Gradle (shared `build/` → false failures).

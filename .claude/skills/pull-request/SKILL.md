@@ -1,15 +1,16 @@
 ---
 name: pull-request
-description: Push the branch, create the GitHub PR with the Evidence template filled from real command output, wait for checks, and squash-merge with branch deletion when green. Use when /finish-task has recorded evidence.
-disable-model-invocation: true
+description: Push the branch, open the GitHub PR with real evidence, drive the required checks green, and squash-merge only after the owner approves the design review and the merge. Use after /finish-task has committed its records.
 ---
 
 # Pull request (GitHub, squash only)
 
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+
 ## Pre-flight
 1. On a work branch with commits ahead of `origin/main`.
 2. `.harness/state/progress.md` updated in this branch — else stop and update.
-3. `docs/llm-wiki/` changed in this branch, or a `Wiki-Skip: <reason>` trailer exists — else run /wiki-ingest first.
+3. The branch changes a file under `docs/llm-wiki/wiki/` other than `concepts/lessons.md` (an ADR via /wiki-ingest), or carries a `Wiki-Skip: <reason>` trailer — used only when no decision was made.
 4. `git -C <root> push -u origin <branch>`. If the pre-push gate blocks, read its message: guards are fail-closed (fix the code), the wiki gate accepts the trailer.
 
 ## Body (from `.github/PULL_REQUEST_TEMPLATE.md`)
@@ -20,6 +21,9 @@ disable-model-invocation: true
 
 ## Create and merge
 1. `gh pr create --fill-first --body-file <tmp> [--label test-change]`
-2. `gh pr checks --watch` until all required checks pass; if `claude-review` requests changes, address blocking items, push, re-watch.
-3. Ask the owner for the design review (the five items on the PR template's "Owner design review" line). On approval: `gh pr merge --squash --delete-branch`.
-4. `git -C <root> switch main && git -C <root> pull --ff-only`.
+2. `gh pr checks --watch` until all required checks pass. Log each failing required check with `<root>/.claude/hooks/log-gate-event.sh ci <check> <run url>`, fix, push.
+   `claude-review` runs on opened/ready_for_review only: after pushing a fix, re-trigger it with `gh pr ready --undo && gh pr ready`. Fix its blocking items and resolve each review thread you addressed (`gh api graphql`, mutation `resolveReviewThread`; conversation resolution is required).
+3. Behind or conflicting with `origin/main`: `git -C <root> merge origin/main` — never rebase and force push (blocked) — keep both sides' entries in state files, re-run `./scripts/check.sh`, push.
+4. Ask the owner for the design review (the five items on the PR template's "Owner design review" line) and for explicit merge approval. Merge only after both.
+5. Merge. In a worktree: `gh pr merge --squash` (the repo deletes merged branches), then from the main checkout (`<main>` = the first path of `git worktree list`) run `git -C <main> pull --ff-only` and remove the worktree with `orca worktree rm --worktree branch:<branch>` or `git -C <main> worktree remove <path>`.
+   Without a worktree: `gh pr merge --squash --delete-branch`, then `git -C <root> switch main && git -C <root> pull --ff-only`.

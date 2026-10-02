@@ -19,6 +19,6 @@ Orca: one ticket = one worktree = one terminal, at most three concurrent. Ticket
 ## Rationale
 Reuses installed tooling and experience; module ownership is the single-writer principle that prevents merge hell.
 ## Accepted costs
-Orca is UI-configured only; worktrees share the Gradle daemon and can produce false Stop-gate failures (hook skips when another build runs).
+Orca is a third-party app that the skills drive through its CLI (`orca worktree create/rm`); worktrees share the Gradle daemon and can produce false Stop-gate failures (hook skips when another build runs).
 ## Outcome
 `.worktreeinclude`; `start-task` checks for blockers before work begins.

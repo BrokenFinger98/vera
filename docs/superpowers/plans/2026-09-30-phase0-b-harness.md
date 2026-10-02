@@ -68,8 +68,9 @@ Coding conventions: `docs/development-rules.md`. Domain words: `docs/domain/glos
 ## Role
 
 You build Vera, a metadata-driven enterprise platform engine (ServiceNow-style) with an ITAM app
-on top. The owner writes specs, tickets and reviews; **you write all code, tests and docs**, and
-you prove completion with evidence (command output, `git diff --stat`), never with assertions.
+on top. The owner approves tickets and specs, reviews designs and approves merges; **you write all
+code, tests and docs**, run the flow and prove completion with evidence (command output,
+`git diff --stat`), never with assertions.
 
 ## Immutable decisions (change = PR + ADR in `docs/llm-wiki/wiki/decisions/`)
 
@@ -112,6 +113,7 @@ the branch; decisions get an ADR (the push gate checks `docs/llm-wiki/` changed,
 /ticket → <type>/<n>-<slug> branch (worktree) → /start-task → work → /gated-commit → /finish-task → /pull-request → squash merge
 ```
 
+You run every step; the owner approves the ticket preview (/ticket), the design review and the merge (/pull-request).
 Explore → Plan → Implement → Verify. Skip the plan only when the diff fits one sentence.
 Large features: interview the owner, write the spec to `docs/superpowers/specs/`, execute in a fresh session.
 Parallel work: one owned module per ticket; shared files (root build files, migrations) only in solo tickets.
@@ -132,7 +134,10 @@ Parallel work: one owned module per ticket; shared files (root build files, migr
 
 ## Bash habits that keep gates quiet
 
-Absolute paths. `git -C /Users/yu-sun00/Desktop/vera ...`. Scripts print `RESULT ... exit=N`; quote it.
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+Absolute paths under `<root>`: `git -C <root> ...`, `<root>/scripts/*.sh`.
+Scripts print `RESULT ... exit=N`; quote it. Commit messages and PR bodies go in files (`-F`,
+`--body-file`) because the danger hook screens the whole command line.
 Do not run Gradle while a worker subagent is running Gradle (shared `build/` → false failures).
 ```
 
@@ -779,21 +784,22 @@ A personal skill outranks a same-name project skill (Claude Code docs, "Resolve 
 ```markdown
 ---
 name: ticket
-description: Create a GitHub issue from the task template (EARS acceptance criteria, owned module, verify commands), then a branch <type>/<n>-<slug> from fresh main. Use when starting any work — the constitution forbids work without an issue.
-disable-model-invocation: true
+description: Create a GitHub issue from the task template (EARS acceptance criteria, owned module, verify commands) once the owner approves the preview, then a branch <type>/<n>-<slug> from fresh main. Use when the owner asks for new work and no issue exists yet; the constitution forbids work without an issue. Not for an existing issue (use /start-task).
 ---
 
 # Create issue and branch
 
 Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-task → /pull-request → squash merge.
 
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+
 ## Process
 1. Ask the type (one question): feat | fix | refactor | test | docs | chore | harness.
 2. Draft the body from the task template below. Ask only for what you cannot infer; **Non-goals and Verify must not be empty**.
-3. Preview, confirm (Yes / Edit / Cancel).
-4. `gh issue create --title "<Type> title" --label task --label <type> --milestone <phase> --body-file <tmp>`
+3. Show the preview; the owner approves it (Yes / Edit / Cancel). Create nothing before a Yes.
+4. `gh issue create --title "<Type> title" --label task --label <type> --milestone phase-<n> --body-file <tmp>`
 5. `git -C <root> fetch origin main && git -C <root> switch -c <type>/<n>-<slug> origin/main`
-   (if the owner uses Orca, print the Orca task-create command instead: one ticket = one worktree.)
+   (with Orca, run `orca worktree create --name <type>/<n>-<slug> --base-branch origin/main --issue <n>` instead: one ticket = one worktree.)
 
 ## Task template (issue body)
 ```
@@ -803,7 +809,7 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 ## Context
 - Spec: docs/superpowers/specs/<file>#<section> (or "none")
 - ADR: <link or "may need one">
-- Owned module: :platform:<name> | :apps:itam | :ingestion | :bootstrap  (no edits outside it)
+- Owned module: <Modulith module, e.g. metadata> (Gradle project `:platform:metadata`) — plus the always-allowed files in CLAUDE.md
 - Blocked by: #<n> (or "none")   Blocks: #<n> (or "none")
 
 ## Acceptance criteria (EARS)
@@ -815,7 +821,7 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 
 ## Verify
 - ./scripts/check.sh
-- ./scripts/itest.sh :<module>
+- ./scripts/itest.sh
 
 ## Size guard
 ≤400 changed lines, ≤10 files. If exceeded: split into stacked PRs and link them here.
@@ -825,7 +831,7 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 ```
 
 ## Labels
-`task` always; type label; `harness` for gate/hook work; milestone = phase.
+`task` always; type label; `harness` for gate/hook work; milestone `phase-<n>`.
 ```
 
 - [ ] **Step 2: Write `gated-commit/SKILL.md`**
@@ -833,19 +839,20 @@ Flow: /ticket → branch → /start-task → work → /gated-commit → /finish-
 ```markdown
 ---
 name: gated-commit
-description: Stage-aware Conventional Commit in English with no AI attribution. Runs the project gates (test pair, English-only, trailers) before the preview. Use for every commit in this repository.
-disable-model-invocation: true
+description: Commit staged changes as an English Conventional Commit with no AI attribution, after the project gates pass (test pair, trailers, immutable migrations, English-only). Use for every commit in this repository; do not run git commit directly.
 ---
 
 # Gated commit (project)
 
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+
 ## Rules
 - English only. Conventional Commits `<type>(<scope>): <subject>` — imperative, ≤50 chars, no period; body ≤72 cols says what and why.
 - **No AI attribution** — no `Co-Authored-By`, no Claude/AI trailer of any kind.
-- Preview first; commit only after "yes" (skip with `--quick`).
+- Show the preview, then commit — no owner confirmation; the gates below replace it.
 
 ## Gates before the preview
-1. `git diff --cached --name-only` empty → tell the user to stage, stop.
+1. `git diff --cached --name-only` empty → stage the files this commit is about (by path), or stop if there is nothing to commit.
 2. New production `.kt` without a test `.kt` in the same PR scope → warn loudly (push gate will enforce).
 3. Test files changed with fewer assertions → require trailer `Test-Change: <reason>` in the body.
 4. Files under `db/migration/` modified (not added) → refuse (immutable migrations).
@@ -855,7 +862,7 @@ disable-model-invocation: true
 ## Process
 1. Analyse the staged diff, pick type/scope/subject.
 2. Show: message, `RESULT` line, `git diff --cached --stat`.
-3. On yes: `git -C <root> commit -F <tmpfile>`.
+3. Commit: `git -C <root> commit -F <tmpfile>`.
 ```
 
 - [ ] **Step 3: Write `pull-request/SKILL.md`**
@@ -863,16 +870,17 @@ disable-model-invocation: true
 ```markdown
 ---
 name: pull-request
-description: Push the branch, create the GitHub PR with the Evidence template filled from real command output, wait for checks, and squash-merge with branch deletion when green. Use when /finish-task has recorded evidence.
-disable-model-invocation: true
+description: Push the branch, open the GitHub PR with real evidence, drive the required checks green, and squash-merge only after the owner approves the design review and the merge. Use after /finish-task has committed its records.
 ---
 
 # Pull request (GitHub, squash only)
 
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+
 ## Pre-flight
 1. On a work branch with commits ahead of `origin/main`.
 2. `.harness/state/progress.md` updated in this branch — else stop and update.
-3. `docs/llm-wiki/` changed in this branch, or a `Wiki-Skip: <reason>` trailer exists — else run /wiki-ingest first.
+3. The branch changes a file under `docs/llm-wiki/wiki/` other than `concepts/lessons.md` (an ADR via /wiki-ingest), or carries a `Wiki-Skip: <reason>` trailer — used only when no decision was made.
 4. `git -C <root> push -u origin <branch>`. If the pre-push gate blocks, read its message: guards are fail-closed (fix the code), the wiki gate accepts the trailer.
 
 ## Body (from `.github/PULL_REQUEST_TEMPLATE.md`)
@@ -883,9 +891,12 @@ disable-model-invocation: true
 
 ## Create and merge
 1. `gh pr create --fill-first --body-file <tmp> [--label test-change]`
-2. `gh pr checks --watch` until all required checks pass; if `claude-review` requests changes, address blocking items, push, re-watch.
-3. Ask the owner for the design review (the five items on the PR template's "Owner design review" line). On approval: `gh pr merge --squash --delete-branch`.
-4. `git -C <root> switch main && git -C <root> pull --ff-only`.
+2. `gh pr checks --watch` until all required checks pass. Log each failing required check with `<root>/.claude/hooks/log-gate-event.sh ci <check> <run url>`, fix, push.
+   `claude-review` runs on opened/ready_for_review only: after pushing a fix, re-trigger it with `gh pr ready --undo && gh pr ready`. Fix its blocking items and resolve each review thread you addressed (`gh api graphql`, mutation `resolveReviewThread`; conversation resolution is required).
+3. Behind or conflicting with `origin/main`: `git -C <root> merge origin/main` — never rebase and force push (blocked) — keep both sides' entries in state files, re-run `./scripts/check.sh`, push.
+4. Ask the owner for the design review (the five items on the PR template's "Owner design review" line) and for explicit merge approval. Merge only after both.
+5. Merge. In a worktree: `gh pr merge --squash` (the repo deletes merged branches), then from the main checkout (`<main>` = the first path of `git worktree list`) run `git -C <main> pull --ff-only` and remove the worktree with `orca worktree rm --worktree branch:<branch>` or `git -C <main> worktree remove <path>`.
+   Without a worktree: `gh pr merge --squash --delete-branch`, then `git -C <root> switch main && git -C <root> pull --ff-only`.
 ```
 
 - [ ] **Step 4: Write `start-task/SKILL.md`**
@@ -893,8 +904,7 @@ disable-model-invocation: true
 ```markdown
 ---
 name: start-task
-description: Load a ticket into the session (issue body, acceptance criteria, owned module), refresh state, and produce a plan or decide to skip planning. Use at the start of every ticket after /ticket.
-disable-model-invocation: true
+description: Load a GitHub issue into the session (body, acceptance criteria, owned module), refresh state, and produce a plan or decide to skip planning. Use right after /ticket, or when the owner names an existing issue to work on, before touching any file.
 ---
 
 # Start task
@@ -904,7 +914,8 @@ disable-model-invocation: true
 2. Confirm you are on `<type>/<n>-<slug>` and, when parallel, in your own worktree.
 3. Re-read `.harness/state/goal.md`, `progress.md` (above the marker), and any ADR the ticket links.
 4. Explore the owned module only: existing tests first, then code. Use a subagent for anything wider.
-5. Decide: one-sentence diff → implement directly. Otherwise write a numbered plan (files, tests per EARS line, order) and show it before coding.
+   Before creating files, Read the `.claude/rules/*.md` whose `paths` match them — rules load when a matching file is read, not when one is written.
+5. Decide: one-sentence diff → implement directly. Otherwise write a numbered plan (files, tests per EARS line, order), show it, then proceed.
 6. Write `.harness/state/goal.md` "Current ticket" block: number, EARS lines, verify commands.
 ```
 
@@ -913,19 +924,20 @@ disable-model-invocation: true
 ```markdown
 ---
 name: finish-task
-description: Close the loop on a ticket — collect evidence, run the adversarial reviewer, update progress, write the counted retro into lessons.md, and hand off to /pull-request. Use when the code is done and the gates are green.
-disable-model-invocation: true
+description: Close the loop on a ticket once the code is done and check.sh and itest.sh are green — collect evidence, run the independent review, record progress and the counted retro, commit those records, then hand off to /pull-request. Not for work in progress.
 ---
 
 # Finish task
 
+`<root>` = `git rev-parse --show-toplevel` of this session (your worktree, not the main checkout).
+
 ## 1. Evidence (paste real output later into the PR)
 - `./scripts/check.sh` → keep the last 30 lines and the `RESULT` line.
-- `./scripts/itest.sh :<module>` → same.
-- `git -C <root> diff --stat origin/main...HEAD` → owned module only? size ≤400 lines? If not, stop and split.
+- `./scripts/itest.sh` → same.
+- `git -C <root> diff --stat origin/main...HEAD` → owned module plus the always-allowed files only? size ≤400 lines? If not, stop and split.
 
 ## 2. Independent review
-Run `/code-review`, then the `critic` subagent with: "Do not trust the implementer's claims. Verify by running. Attack: boundary values, null/empty, concurrency, ACL bypass, migration reversibility. Report gaps affecting correctness or requirements only." Fix blocking findings; list the rest with disposition.
+Run `/code-review` for a general pass, then the `critic` subagent: have it apply REVIEW.md's must-check list to `git -C <root> diff origin/main...HEAD`, then attack with: "Do not trust the implementer's claims. Verify by running. Attack: boundary values, null/empty, concurrency, ACL bypass, migration reversibility. Report gaps affecting correctness or requirements only." Fix blocking findings and log each one with `<root>/.claude/hooks/log-gate-event.sh critic <rule> <one line>`; list the rest with disposition.
 
 ## 3. Progress
 Append to `.harness/state/progress.md` above `<!-- ARCHIVE -->`: `## [YYYY-MM-DD] #<n> <title> ✅` + commits + evidence lines.
@@ -937,9 +949,12 @@ If an equivalent lesson exists, increment its `count:` and add the ticket number
 A lesson with `count: 3` is due for promotion (weekly routine opens the PR) — do not promote it yourself.
 
 ## 5. Decisions
-Any decision made → ADR via /wiki-ingest (push gate checks). None → plan to use `Wiki-Skip: no decision` trailer.
+Any decision made → ADR via /wiki-ingest (push gate checks). None → step 6 adds the `Wiki-Skip: no decision` trailer.
 
-## 6. Hand off
+## 6. Commit the records
+Stage `.harness/state/progress.md`, `docs/llm-wiki/wiki/concepts/lessons.md`, `.harness/events.jsonl` and any ADR, then run /gated-commit; with no decision, put `Wiki-Skip: no decision` in that commit's body.
+
+## 7. Hand off
 Run /pull-request.
 ```
 
@@ -1918,7 +1933,7 @@ Orca: one ticket = one worktree = one terminal, at most three concurrent. Ticket
 ## Rationale
 Reuses installed tooling and experience; module ownership is the single-writer principle that prevents merge hell.
 ## Accepted costs
-Orca is UI-configured only; worktrees share the Gradle daemon and can produce false Stop-gate failures (hook skips when another build runs).
+Orca is a third-party app that the skills drive through its CLI (`orca worktree create/rm`); worktrees share the Gradle daemon and can produce false Stop-gate failures (hook skips when another build runs).
 ## Outcome
 `.worktreeinclude`; `start-task` checks for blockers before work begins.
 ```
