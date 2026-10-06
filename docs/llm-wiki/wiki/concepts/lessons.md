@@ -3,7 +3,7 @@ type: concept
 project: vera
 tags: [harness, self-improvement, lessons]
 created: 2026-09-30
-updated: 2026-10-02
+updated: 2026-10-06
 sources: []
 ---
 
@@ -28,6 +28,16 @@ fix: /ticket step 5 renames the branch right after `orca worktree create`; log-g
 count: 1 · tickets: #5 · first: 2026-10-02 · last: 2026-10-02 · status: open
 what: proving guards.sh on Ubuntu (mawk, gawk) took a hand-built Docker run: apt failed on DNS until `--dns 1.1.1.1`, and installing gawk silently switched `awk` away from mawk
 fix: run scripts/test-hooks.sh in CI on ubuntu-latest once with mawk and once with gawk (the deferred "test-hooks.sh in CI" ticket)
+
+### restated-rule-drift
+count: 1 · tickets: #8 · first: 2026-10-06 · last: 2026-10-06 · status: open
+what: D10 changed the test-weakening rule but only CLAUDE.md was updated in #5; the spec (§6, §7 DoD, §13), the PR template and D4 kept the old rule, which needed a follow-up ticket, and #8's own Verify grep missed two of the phrasings
+fix: an ADR that changes a rule lists every place that restates it (grep for the rule's keywords, not one phrase) and the same PR updates them or names them as historical
+
+### phase-exit-criteria-diverge
+count: 1 · tickets: #8 · first: 2026-10-06 · last: 2026-10-06 · status: open
+what: spec §12 step 7 asks the Phase 0 acceptance run for a first non-probe metrics line, but plan Task 13 Step 4 (the close-out the ticket followed) omits it; the gap was found only while writing the evidence
+fix: a phase close-out ticket copies its exit criteria from the spec's acceptance section, not from the plan, and checks each one with a command
 
 ---
 

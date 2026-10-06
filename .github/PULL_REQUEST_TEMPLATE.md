@@ -27,7 +27,7 @@ Reviewer / critic findings and disposition:
 - [ ] `check.sh` and `itest.sh` output above, exit 0
 - [ ] Only the owned module changed, plus the always-allowed files in CLAUDE.md (or split rationale below)
 - [ ] ≤ 400 changed lines (`.harness/events.jsonl` excluded), one behaviour change
-- [ ] `Test-Change:` trailer if tests were deleted or assertions reduced; label `test-change` if `src/test|itest|archTest` touched
+- [ ] `Test-Change: <reason>` (the reason in the body) on each commit that deletes, disables or moves out a test or lowers a file's assertions or test cases; label `test-change` if `src/test|itest|archTest` touched
 - [ ] ADR / module spec updated, or "no decision made"
 - [ ] `.harness/state/progress.md` updated in this branch (issue `#<n>`)
 - [ ] Rollback: <migration reversal or "plain revert suffices">
