@@ -4,7 +4,7 @@ project: vera
 author: BrokenFinger98
 tags: [phase-0, testing, gates]
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-06
 sources: [raw/sessions/2026-09-30-phase0-design-and-research.md]
 ---
 
@@ -15,7 +15,7 @@ Böckeler (martinfowler.com, 2026-08-10) found no quality difference between age
 ## Options considered
 Enforce TDD via skills/hooks · scenarios + gates · scenarios only.
 ## Decision
-EARS acceptance criteria are drafted by the agent in /ticket and approved by the owner; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2), Modulith `verify()` (`test`) + ArchUnit (`archTest`), Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
+EARS acceptance criteria are drafted by the agent in /ticket and approved by the owner; the agent writes tests and code together. Gates: tests must ship in the same PR (guard 8), assertions may not decrease without a `Test-Change:` trailer (guard 2; ⚠️ superseded: refined to per commit and per test source by [[decisions/2026-10-02-test-weakening-judged-per-commit-and-file]]), Modulith `verify()` (`test`) + ArchUnit (`archTest`), Kover ≥ 80% lines, Pitest on core modules nightly from Phase 1.
 ## Rationale
 What the machine can enforce is "tests come with the code" and "tests are not weakened"; the order of writing is unprovable and, per the evidence, not valuable.
 ## Accepted costs
