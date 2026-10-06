@@ -30,6 +30,6 @@ Entries start with the date. Everything above the archive marker (the HTML comme
 - Review: /code-review (10 findings) and two critic rounds (1 blocking, 2 major, 4 minor; then 1 blocking, 1 major, 2 minor): annotation spellings, aliases and backtick names, conflicted and stacked merges, rename pairing, KDoc conflicts, string templates, CRLF markers and tab paths fixed; the rest are accepted costs in D10 or deferred below
 - Acceptance run (plan Task 13 Step 3): stop-gate, pre-push-guard, wiki-gate and ci events forced on this ticket (each blocked, then fixed: a failing unit test at Stop, a commented-out `.check(` at push, a push before the ADR, a test-source change without the `test-change` label on PR #6) and published to `.harness/events.jsonl`; first lessons.md entries
 - Found: `scripts/test-hooks.sh` fails one test on Linux (a >100 KB `jq --arg`; one argument is capped at 128 KiB), for the deferred "test-hooks.sh in CI" ticket
-- Deferred to the Phase 0 close-out: spec §6 row 2, `.github/PULL_REQUEST_TEMPLATE.md` and the CLAUDE.md `Test-Change` sentence still state the old rule. Follow-up idea: compare executed and skipped tests from the JUnit XML reports of base and head in CI
+- Deferred to the Phase 0 close-out: spec §6 row 2 and `.github/PULL_REQUEST_TEMPLATE.md` still state the old rule; the CLAUDE.md sentence is fixed here (the owner approved the 11th file). Follow-up idea: compare executed and skipped tests from the JUnit XML reports of base and head in CI
 
 <!-- ARCHIVE -->
