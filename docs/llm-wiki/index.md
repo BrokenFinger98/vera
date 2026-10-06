@@ -12,6 +12,7 @@ Read this first. Every page is registered here; entries start with a date so mer
 - 2026-09-30 [[decisions/2026-09-30-stop-hook-gate-trial]] — D7: Stop-hook check.sh gate as a one-month trial with firing audit
 - 2026-09-30 [[decisions/2026-09-30-no-graph-runtime-for-pipeline]] — D8: no graph orchestration runtime; dependency-aware tickets + three saved fan-out workflows
 - 2026-09-30 [[decisions/2026-09-30-human-approved-self-improvement-loop]] — D9: events → counted lessons → weekly proposal PRs → monthly prune PRs, owner merges
+- 2026-10-02 [[decisions/2026-10-02-test-weakening-judged-per-commit-and-file]] — D10: guards judge each commit and test source (assertions, test cases, skip markers, deletions; merges via git merge-file); the trailer sits on the weakening commit
 
 ## Concepts
 - 2026-09-30 [[concepts/lessons]] — counted lessons feeding the self-improvement loop (open / proposed / promoted / dropped)

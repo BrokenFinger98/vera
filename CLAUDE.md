@@ -59,8 +59,10 @@ Spring context tests live in `:bootstrap` until Phase 1 decides a per-module tes
 
 Also: every new production `.kt` ships with a test in the same PR; `progress.md` is updated in
 the branch; decisions get an ADR (the push gate needs a change under `docs/llm-wiki/wiki/` other
-than `concepts/lessons.md`, or a `Wiki-Skip: <reason>` trailer). `Test-Change: <reason>` is only for
-deleting tests or reducing assertions, with the reason in the commit body; adding tests needs none.
+than `concepts/lessons.md`, or a `Wiki-Skip: <reason>` trailer). `Test-Change: <reason>` (the reason
+in the body) goes on the very commit that deletes, disables or moves out a test or lowers a file's
+assertions or test cases: the push guard judges each commit. Adding tests needs none, unless they
+carry a skip marker.
 The `test-change` PR label is separate: it marks any change under `src/test|itest|archTest`.
 
 ## Development flow (mandatory)
