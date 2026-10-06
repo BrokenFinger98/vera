@@ -24,4 +24,12 @@ Entries start with the date. Everything above the archive marker (the HTML comme
 - Deferred hardening tickets: test-weakening detection · harness-owned paths · migration rename/delete · danger-hook false negatives and positives · guard fixtures and `test-hooks.sh` in CI
 - Next: Phase 0 ends when that first harness ticket completes the loop and stop-gate, pre-push-guard, wiki-gate and ci events have each been published; Phase 1 ticket 1 via /brainstorming → /ticket (see goal.md) follows
 
+## [2026-10-02] #5 harness: detect test weakening per commit and per file ✅
+- guards.sh checks 1–2 judge every commit and test source: fewer assertions or test cases, a new skip marker (any spelling, Kotlin aliases followed) or a deleted or moved-out test needs `Test-Change: <reason>` on that very commit; a merge is judged against the merge `git merge-tree` makes of its parents (ADR D10)
+- Evidence: `RESULT check exit=0` · `RESULT itest exit=0` (Gradle up to date: no Kotlin input changed) · `scripts/test-hooks.sh` 125 PASS on macOS, 124 PASS on Ubuntu 26.04 with mawk and with gawk · 18 guards.sh mutants killed · pre-squash Phase 0-A history: one refusal in 58 commits, a true positive
+- Review: /code-review (10 findings) and two critic rounds (1 blocking, 2 major, 4 minor; then 1 blocking, 1 major, 2 minor): annotation spellings, aliases and backtick names, conflicted and stacked merges, rename pairing, KDoc conflicts, string templates, CRLF markers and tab paths fixed; the rest are accepted costs in D10 or deferred below
+- Acceptance run (plan Task 13 Step 3): stop-gate, pre-push-guard, wiki-gate and ci events forced on this ticket (each blocked, then fixed: a failing unit test at Stop, a commented-out `.check(` at push, a push before the ADR, a test-source change without the `test-change` label on PR #6) and published to `.harness/events.jsonl`; first lessons.md entries
+- Found: `scripts/test-hooks.sh` fails one test on Linux (a >100 KB `jq --arg`; one argument is capped at 128 KiB), for the deferred "test-hooks.sh in CI" ticket
+- Deferred to the Phase 0 close-out: spec §6 row 2 and `.github/PULL_REQUEST_TEMPLATE.md` still state the old rule; the CLAUDE.md sentence is fixed here (the owner approved the 11th file). Follow-up idea: compare executed and skipped tests from the JUnit XML reports of base and head in CI
+
 <!-- ARCHIVE -->
