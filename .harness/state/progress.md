@@ -15,9 +15,10 @@ Entries start with the date. Everything above the archive marker (the HTML comme
 - PR #2 (merged 2026-09-30T23:34Z) `docs: record PoC 4 (Kotlin LSP) as passing`
 - PR #3 (merged 2026-10-01T01:37Z) `build: migrate to detekt 2.0.0-alpha.6 and run the Gradle daemon on JDK 25`
 
-## [2026-10-02] Phase 0-B — harness, gates, wiki, self-improvement loop 🚧
+## [2026-10-02] Phase 0-B — harness, gates, wiki, self-improvement loop ✅ (closed 2026-10-06, #8)
 - Plan: `docs/superpowers/plans/2026-09-30-phase0-b-harness.md`
-- Status: harness on PR #4 (this branch); the owner's GitHub App and secret, the merge, Task 13 protection and the acceptance run are pending
+- Closed: PR #4 squash-merged 2026-10-02T03:50Z · `CLAUDE_CODE_OAUTH_TOKEN` set 2026-10-02 · Task 13 protection on `main` (PRs only, no force pushes, six required checks: check, itest, coverage, build, label-required-when-tests-change, guards; squash only, merged branches deleted) · acceptance run #5 → PR #6 squash-merged 2026-10-06T00:18Z through the whole loop · non-probe events published to `.harness/events.jsonl`: stop-gate/check.sh-failed, pre-push-guard/assertion-decrease, wiki-gate/blocked-no-wiki-change, ci/label-required-when-tests-change (plus two critic events) · first scheduled harness-improve run 2026-10-05 succeeded and opened metrics PR #7 (merged 2026-10-06T00:36Z; it counted no non-probe events, so the first non-probe metrics line is due with the next weekly run)
+- Status below is the 2026-10-02 snapshot, kept as written
 - Exists: CLAUDE.md (102 lines) · 5 rules · 8 skills · 4 hooks + the `log-gate-event.sh` writer and `scripts/publish-events.sh` · pre-push guards (9 checks + wiki gate), hardened after the critic and final reviews · CI workflows: `ci.yml`, `test-guard.yml` (the `test-change` label job and the `guards` job, which runs the base commit's `guards.sh`), `claude-review.yml`, `harness-improve.yml` · 3 saved fan-out workflows · ADRs D1–D9 in `docs/llm-wiki/wiki/decisions/`
 - Events: gate firings go to the shared untracked log in the git common dir and are published to `.harness/events.jsonl`; 4 probe lines (`"probe":true`: stop-gate 1, block-danger 1, pre-push-guard 2 from the negative probe) are published so far
 - Pending: the owner installs the Claude GitHub App and sets `CLAUDE_CODE_OAUTH_TOKEN` (before the acceptance run and before the first scheduled `harness-improve` run, Mon 2026-10-05 06:00 KST) · squash-merge PR #4 · Task 13 branch protection · the acceptance run, which is the first deferred harness-hardening ticket through the whole loop (owned area `harness`)
@@ -31,5 +32,10 @@ Entries start with the date. Everything above the archive marker (the HTML comme
 - Acceptance run (plan Task 13 Step 3): stop-gate, pre-push-guard, wiki-gate and ci events forced on this ticket (each blocked, then fixed: a failing unit test at Stop, a commented-out `.check(` at push, a push before the ADR, a test-source change without the `test-change` label on PR #6) and published to `.harness/events.jsonl`; first lessons.md entries
 - Found: `scripts/test-hooks.sh` fails one test on Linux (a >100 KB `jq --arg`; one argument is capped at 128 KiB), for the deferred "test-hooks.sh in CI" ticket
 - Deferred to the Phase 0 close-out: spec §6 row 2 and `.github/PULL_REQUEST_TEMPLATE.md` still state the old rule; the CLAUDE.md sentence is fixed here (the owner approved the 11th file). Follow-up idea: compare executed and skipped tests from the JUnit XML reports of base and head in CI
+
+## [2026-10-06] #8 docs: close Phase 0 and align spec §6 and the PR template with ADR D10 ✅
+- Spec §6 row 2, §7 DoD item 4 and §13 and `.github/PULL_REQUEST_TEMPLATE.md` state the D10 rule: each commit and test source judged, the `Test-Change: <reason>` trailer on that very commit
+- Old wording kept as historical records: the Phase 0-B plan, D10's Context and D4's Decision (refined by D10)
+- Phase 0-B flipped to ✅; goal.md rewritten for Phase 1 (metadata engine)
 
 <!-- ARCHIVE -->
