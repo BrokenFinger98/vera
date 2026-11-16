@@ -4,3 +4,4 @@
 |---|---|---|---|---|---|---|---|
 | 2026-W40 (to 2026-10-02) | 3 | 558 | none counted (4 probe events, `"probe":true`, are skipped: stop-gate/check.sh-failed, block-danger/git-discard-all, pre-push-guard/deleted-test-file and assertion-decrease) | – | 11% (1 of 9 completed runs; 1 cancelled run not counted) | 0 | – |
 | 2026-W40 (2026-10-02 to 2026-10-04) | 1 | 3122 (#4, gross; events.jsonl not excluded) | none counted (no non-probe events) | – | 6% (1 of 18 completed runs; 1 cancelled run not counted) | 0 | – |
+| 2026-W42..W47 (2026-10-12 to 2026-11-16) | 0 | – | none (no events published since 2026-10-02) | – | 0% (0 of 5 completed runs, all scheduled harness-improve; the run in progress is not counted) | 0 | – |
